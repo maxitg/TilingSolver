@@ -285,16 +285,23 @@ $symmetryTransforms = Composition @@@ Tuples[{
   {Identity, Transpose},
   {Identity, Replace[#, {0 -> 1, 1 -> 0}, {2}] &}}];
 
-CanonicalPatternSetQ[subset_] := 
-  First[Sort[Sort /@ Function[transform, transform /@ subset] /@ $symmetryTransforms]] === Sort[subset];
+CanonicalPatternSetQ[symmetryPermutations_, subsetSize_][subsetInt_] := With[{
+    digits = IntegerDigits[subsetInt, 2, subsetSize]},
+  First[Sort[Permute[digits, #] & /@ symmetryPermutations]] === digits
+];
 
-TilingsOfSize[inputPatterns_, size_, tilingDAG_] := Module[{
-    allSubsetInts, allSubsets, canonicalQ, printCell},
+GetSymmetryPermutations[patterns_] := DeleteCases[{0...}] @ Map[
+  First @ FirstPosition[patterns, #, {0}] &, Function[transform, transform /@ patterns] /@ $symmetryTransforms, {2}];
+
+TilingsIntsOfSize[inputPatterns_, size_, tilingDAG_] := Module[{
+    allSubsetInts, symmetryPermutations, allSubsets, canonicalQ, printCell},
   (* Generate all subsets *)
   allSubsetInts = UnknownSubsets[tilingDAG, size];
-  allSubsets = inputPatterns[[First /@ Position[#, 1]]] & /@ IntegerDigits[allSubsetInts, 2, Length[inputPatterns]];
-  canonicalQ = MapMonitored[CanonicalPatternSetQ, allSubsets, "Label" -> "Canonicalizing"];
-  Pick[allSubsets, canonicalQ]
+  symmetryPermutations = GetSymmetryPermutations[inputPatterns];
+  Print["Found symmetries: ", Length @ symmetryPermutations];
+  canonicalQ = MapMonitored[
+    CanonicalPatternSetQ[symmetryPermutations, Length[inputPatterns]], allSubsetInts, "Label" -> "Canonicalizing"];
+  Pick[allSubsetInts, canonicalQ]
 ];
 
 AddSymmetricPatterns[patterns_] := 
@@ -305,11 +312,10 @@ FindMinimalPatterns[allPatterns_,
                     setSize_Integer,
                     size_ : 20,
                     init_ : {}] := Reap @ Block[{
-    newPatternsToTry, newPatternsAsNumbers, successfulPatterns, successfulPatternsAsNumbers, printCell},
+    newPatternsAsNumbers, successfulPatterns, successfulPatternsAsNumbers, printCell},
   Print["Set size: ", setSize];
-  newPatternsToTry = TilingsOfSize[allPatterns, setSize, tilingDAG];
-  Print["Pattern sets to tile: ", Length @ newPatternsToTry];
-  newPatternsAsNumbers = PatternSetToNumber[allPatterns] /@ newPatternsToTry;
+  newPatternsAsNumbers = TilingsIntsOfSize[allPatterns, setSize, tilingDAG];
+  Print["Pattern sets to tile: ", Length @ newPatternsAsNumbers];
   successfulPatterns = AddSymmetricPatterns[
     NumberToPatternSet[allPatterns] /@
       SuccessfulTilings[allPatterns, newPatternsAsNumbers, size, init, Max[Dimensions[First[allPatterns]]]]];
