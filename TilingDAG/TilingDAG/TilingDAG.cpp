@@ -3,6 +3,7 @@
 #include <cmath>
 #include <iostream>
 #include <vector>
+#include <functional>
 
 class TilingDAG::Implementation {
  private:
