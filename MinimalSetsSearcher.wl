@@ -322,14 +322,23 @@ FindMinimalPatterns[allPatterns_, tilingDAG_, setSize_Integer, size_ : 20, init_
 ];
 
 FindTilingsSeq[allPatterns_, maxSetSize_Integer, filename_, size_ : 20, init_ : {}] := Module[{
-    tilingDAG = CreateTilingDAG[Length[allPatterns]]},
-  Put[{}, filename];
+    tilingDAG = CreateTilingDAG[Length[allPatterns]], minimalSetsSoFar, maxSizeDone = 0},
+  If[FileExistsQ[filename],
+    minimalSetsSoFar = Import @ filename;
+    maxSizeDone = Length @ minimalSetsSoFar;
+    MapMonitored[SetTileable[tilingDAG, #] &,
+                 PatternSetToNumber[allPatterns] /@ Catenate @ minimalSetsSoFar,
+                 "Label" -> "Initializing tilingDAG"];
+    SetUntileableUpToSize[tilingDAG, maxSizeDone];
+  ,
+    Put[{}, filename];
+  ];
   Map[Module[{result},
     result = FindMinimalPatterns[allPatterns, tilingDAG, #, size, init];
     Put[Append[Import[filename], result], filename];
     result
   ] &,
-    Range[1, maxSetSize]
+    Range[maxSizeDone + 1, maxSetSize]
   ]
 ];
 
