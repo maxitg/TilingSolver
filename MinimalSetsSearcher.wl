@@ -305,14 +305,15 @@ TilingsIntsOfSize[inputPatterns_, size_, tilingDAG_] := Module[{
 ];
 
 AddSymmetricPatterns[symmetryPermutations_, subsetSize_][numbers_] := Union[
-  FromDigits[#, 2] & /@ Catenate @ Outer[Permute, IntegerDigits[#, 2, subsetSize] & /@ numbers, symmetryPermutations]];
+  FromDigits[#, 2] & /@
+    Catenate @ Outer[Permute, IntegerDigits[#, 2, subsetSize] & /@ numbers, symmetryPermutations, 1]];
 
 FindMinimalPatterns[allPatterns_, tilingDAG_, setSize_Integer, size_ : 20, init_ : {}] := Block[{
     newPatternsAsNumbers, successfulPatternsAsNumbers},
   Print["Set size: ", setSize];
   newPatternsAsNumbers = TilingsIntsOfSize[allPatterns, setSize, tilingDAG];
   Print["Pattern sets to tile: ", Length @ newPatternsAsNumbers];
-  successfulPatternsAsNumbers = AddSymmetricPatterns[Length[allPatterns], GetSymmetryPermutations[allPatterns]][
+  successfulPatternsAsNumbers = AddSymmetricPatterns[GetSymmetryPermutations[allPatterns], Length[allPatterns]][
     SuccessfulTilings[allPatterns, newPatternsAsNumbers, size, init, Max[Dimensions[First[allPatterns]]]]];
   Print["Successful count: ", Length @ successfulPatternsAsNumbers];
   MapMonitored[SetTileable[tilingDAG, #] &, successfulPatternsAsNumbers, "Label" -> "Writing to tilingDAG"];
