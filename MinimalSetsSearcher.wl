@@ -304,34 +304,27 @@ TilingsIntsOfSize[inputPatterns_, size_, tilingDAG_] := Module[{
   Pick[allSubsetInts, canonicalQ]
 ];
 
-AddSymmetricPatterns[patterns_] := 
-  Union[Sort /@ Catenate[Function[transform, transform /@ #] /@ $symmetryTransforms & /@ patterns]];
+AddSymmetricPatterns[symmetryPermutations_, subsetSize_][numbers_] := Union[
+  FromDigits[#, 2] & /@ Catenate @ Outer[Permute, IntegerDigits[#, 2, subsetSize] & /@ numbers, symmetryPermutations]];
 
-FindMinimalPatterns[allPatterns_,
-                    tilingDAG_,
-                    setSize_Integer,
-                    size_ : 20,
-                    init_ : {}] := Reap @ Block[{
-    newPatternsAsNumbers, successfulPatterns, successfulPatternsAsNumbers, printCell},
+FindMinimalPatterns[allPatterns_, tilingDAG_, setSize_Integer, size_ : 20, init_ : {}] := Block[{
+    newPatternsAsNumbers, successfulPatternsAsNumbers},
   Print["Set size: ", setSize];
   newPatternsAsNumbers = TilingsIntsOfSize[allPatterns, setSize, tilingDAG];
   Print["Pattern sets to tile: ", Length @ newPatternsAsNumbers];
-  successfulPatterns = AddSymmetricPatterns[
-    NumberToPatternSet[allPatterns] /@
-      SuccessfulTilings[allPatterns, newPatternsAsNumbers, size, init, Max[Dimensions[First[allPatterns]]]]];
-  Print["Successful count: ", Length @ successfulPatterns];
-  successfulPatternsAsNumbers =
-    Map[Total, (2^(Map[First @ FirstPosition[allPatterns, #] &, successfulPatterns, {2}] - 1)), {1}];
+  successfulPatternsAsNumbers = AddSymmetricPatterns[Length[allPatterns], GetSymmetryPermutations[allPatterns]][
+    SuccessfulTilings[allPatterns, newPatternsAsNumbers, size, init, Max[Dimensions[First[allPatterns]]]]];
+  Print["Successful count: ", Length @ successfulPatternsAsNumbers];
   MapMonitored[SetTileable[tilingDAG, #] &, successfulPatternsAsNumbers, "Label" -> "Writing to tilingDAG"];
   SetUntileableUpToSize[tilingDAG, setSize];
-  successfulPatterns
+  NumberToPatternSet[allPatterns] /@ successfulPatternsAsNumbers
 ];
 
 FindTilingsSeq[allPatterns_, maxSetSize_Integer, filename_, size_ : 20, init_ : {}] := Module[{
     tilingDAG = CreateTilingDAG[Length[allPatterns]]},
   Put[{}, filename];
   Map[Module[{result},
-    result = FindMinimalPatterns[allPatterns, tilingDAG, #, size, init][[1]];
+    result = FindMinimalPatterns[allPatterns, tilingDAG, #, size, init];
     Put[Append[Import[filename], result], filename];
     result
   ] &,
