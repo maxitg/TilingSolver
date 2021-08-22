@@ -32,9 +32,9 @@ mapFuncMonitored[mapFunc_, f_, expr_, o : OptionsPattern[]] := Module[{
   SetSharedVariable[globalCounter, globalStartTime];
   exprLength = Length[expr];
   label = If[StringQ[OptionValue["Label"]], OptionValue["Label"], "Evaluating ParallelMap"];
-  updateInterval = OptionValue["UpdateInterval"];
   lastCheckedTime = AbsoluteTime[];
   ParallelEvaluate[lastCheckedTime = AbsoluteTime[], DistributedContexts -> Automatic];
+  updateInterval = OptionValue["UpdateInterval"] * $KernelCount;
   printStatusUpdate[label, exprLength, globalStartTime][globalCounter];
   mapFunc[(
     If[localStartTime === Infinity, localStartTime = AbsoluteTime[]];
@@ -275,7 +275,8 @@ SuccessfulTilings[allPatterns_, patternNumbers_, size_, init_, patternSize_] := 
   tileableQ = ParallelMapMonitored[
     Not[FailureQ @ GenerateTilingSequence[allPatterns, #, init, size, patternSize]] &,
     patternNumbers,
-    "Label" -> "Tiling"];
+    "Label" -> "Tiling",
+    Method -> "CoarsestGrained"];
   Pick[patternNumbers, tileableQ]
 ];
 
