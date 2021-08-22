@@ -285,6 +285,11 @@ $symmetryTransforms = Composition @@@ Tuples[{
   {Identity, Transpose},
   {Identity, Replace[#, {0 -> 1, 1 -> 0}, {2}] &}}];
 
+CanonicalPatternSet[symmetryPermutations_, subsetSize_][subsetInt_] := With[{
+    digits = IntegerDigits[subsetInt, 2, subsetSize]},
+  FromDigits[First[Sort[Permute[digits, #] & /@ symmetryPermutations]], 2]
+];
+
 CanonicalPatternSetQ[symmetryPermutations_, subsetSize_][subsetInt_] := With[{
     digits = IntegerDigits[subsetInt, 2, subsetSize]},
   First[Sort[Permute[digits, #] & /@ symmetryPermutations]] === digits
@@ -345,7 +350,32 @@ FindTilingsSeq[allPatterns_, maxSetSize_Integer, filename_, size_ : 20, init_ : 
 ReverseEngineerTiles[tilegraphic_] :=
   Reverse /@ Cases[tilegraphic, Raster[x_SparseArray, ___] :> (Normal[x] /. {0.5 -> _, 1. -> 1, 0. -> 0}), Infinity];
 
-(* Main *)
+ImportMinimalSets[size_, maskID_] :=
+  Import[ToString[size[[1]]] <> "-" <> ToString[size[[2]]] <> "-" <> ToString[maskID] <> ".m"];
+
+CanonicalMinimalSets[size_, maskID_] := Module[{minimalSets, allPatterns, permutations},
+  minimalSets = ImportMinimalSets[size, maskID];
+  allPatterns = maskToAllPatterns @ idToMask[size, maskID];
+  permutations = GetSymmetryPermutations[allPatterns];
+  canonicalSetsAsNumbers = Select[CanonicalPatternSetQ[permutations, Length[allPatterns]]] /@
+    Map[PatternSetToNumber[allPatterns], minimalSets, {2}];
+  Map[NumberToPatternSet[allPatterns], canonicalSetsAsNumbers, {2}]
+];
+
+(* Periodicity *)
+
+MinimalPeriod[maxPeriod_][patterns_] := Module[{minPeriod, currentPeriod},
+  minPeriod = Length[First[patterns]] + 1;
+  SelectFirst[(
+      WriteString["stdout", " ", #];
+      !FailureQ[GenerateTiling[patterns, {}, #, Boundary -> "Periodic"]]
+    ) &][Range[minPeriod, maxPeriod]]
+];
+
+MinimalPeriodCached[allPatterns_, maxPeriod_][setNumber_] := MinimalPeriodCached[allPatterns, maxPeriod][setNumber] =
+  MinimalPeriod[maxPeriod][NumberToPatternSet[allPatterns][setNumber]];
+
+(* Main - FindMinimalSets *)
 
 idToMask[size_, maskID_] := Partition[IntegerDigits[maskID, 2, Times @@ size], size[[1]]];
 
@@ -354,9 +384,43 @@ maskToAllPatterns[mask_] := With[{
   Function[functionBody] @@@ Tuples[{1, 0}, Count[Catenate[mask], 1]]
 ];
 
-FindMinimalSets[size_, maskID_] := Module[{},
+FindMinimalSets[size_, maskID_] := Module[{allPatterns},
   allPatterns = maskToAllPatterns @ idToMask[size, maskID];
   FindTilingsSeq[allPatterns,
                  Length[allPatterns],
                  ToString[size[[1]]] <> "-" <> ToString[size[[2]]] <> "-" <> ToString[maskID] <> ".m"]
+];
+
+
+(* Main - FindMinimalPeriods *)
+
+FindMinimalPeriods[maxPeriod_][size_, maskID_] := Module[{
+    allPatterns, minimalSets, minimalSetsAsNumbers, permutations, currentSize, currentSet, minimalPeriods},
+  allPatterns = maskToAllPatterns @ idToMask[size, maskID];
+  minimalSets = ImportMinimalSets[size, maskID];
+  minimalSetsAsNumbers = Map[PatternSetToNumber[allPatterns], minimalSets, {2}];
+  permutations = GetSymmetryPermutations[allPatterns];
+  minimalPeriods = Table[(
+    WriteString["stdout",
+                "Tiling ",
+                currentSize,
+                "/",
+                Length[minimalSets],
+                " : ",
+                currentSet,
+                "/",
+                Length[minimalSets[[currentSize]]],
+                " :"];
+    WithCleanup[
+      MinimalPeriodCached[allPatterns, maxPeriod][
+        CanonicalPatternSet[permutations, Length[allPatterns]][minimalSetsAsNumbers[[currentSize, currentSet]]]]
+    ,
+      WriteString["stdout", "\n"];
+    ]
+  ), {currentSize, Length[minimalSets]}, {currentSet, Length[minimalSets[[currentSize]]]}];
+  Put[
+    minimalPeriods, "periods-" <> ToString[size[[1]]] <> "-" <> ToString[size[[2]]] <> "-" <> ToString[maskID] <> ".m"];
+  Print["Periods exceeding the limit: ", Count[Catenate @ minimalPeriods, _ ? MissingQ]];
+  Print["Max: ", Max @ Cases[Catenate @ minimalPeriods, Except[_ ? MissingQ]]];
+  minimalPeriods
 ];
