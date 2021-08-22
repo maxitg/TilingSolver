@@ -353,6 +353,9 @@ ReverseEngineerTiles[tilegraphic_] :=
 ImportMinimalSets[size_, maskID_] :=
   Import[ToString[size[[1]]] <> "-" <> ToString[size[[2]]] <> "-" <> ToString[maskID] <> ".m"];
 
+ImportMinimalPeriods[size_, maskID_] :=
+  Import["periods-" <> ToString[size[[1]]] <> "-" <> ToString[size[[2]]] <> "-" <> ToString[maskID] <> ".m"];
+
 CanonicalMinimalSets[size_, maskID_] := Module[{minimalSets, allPatterns, permutations},
   minimalSets = ImportMinimalSets[size, maskID];
   allPatterns = maskToAllPatterns @ idToMask[size, maskID];
