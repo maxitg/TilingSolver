@@ -381,7 +381,7 @@ MinimalPeriodCached[allPatterns_, maxPeriod_][setNumber_] := MinimalPeriodCached
 
 (* Main - FindMinimalSets *)
 
-idToMask[size_, maskID_] := Partition[IntegerDigits[maskID, 2, Times @@ size], size[[1]]];
+idToMask[size_, maskID_] := Partition[IntegerDigits[maskID, 2, Times @@ size], size[[2]]];
 
 maskToAllPatterns[mask_] := With[{
     functionBody = Module[{n = 0}, mask /. {0 -> _, 1 :> Slot[++n]}]},
