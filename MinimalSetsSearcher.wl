@@ -369,7 +369,7 @@ CanonicalMinimalSets[size_, maskID_] := Module[{minimalSets, allPatterns, permut
 (* Periodicity *)
 
 MinimalPeriod[maxPeriod_][patterns_] := Module[{minPeriod, currentPeriod},
-  minPeriod = Length[First[patterns]] + 1;
+  minPeriod = Max[Dimensions[First[patterns]]] + 1;
   SelectFirst[(
       WriteString["stdout", " ", #];
       !FailureQ[GenerateTiling[patterns, {}, #, Boundary -> "Periodic"]]
