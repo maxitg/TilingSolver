@@ -275,8 +275,7 @@ SuccessfulTilings[allPatterns_, patternNumbers_, size_, init_, patternSize_] := 
   tileableQ = ParallelMapMonitored[
     Not[FailureQ @ GenerateTilingSequence[allPatterns, #, init, size, patternSize]] &,
     patternNumbers,
-    "Label" -> "Tiling",
-    Method -> "CoarsestGrained"];
+    "Label" -> "Tiling"];
   Pick[patternNumbers, tileableQ]
 ];
 
