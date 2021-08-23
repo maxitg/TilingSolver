@@ -35,6 +35,7 @@ mapFuncMonitored[mapFunc_, f_, expr_, o : OptionsPattern[]] := Module[{
   lastCheckedTime = AbsoluteTime[];
   ParallelEvaluate[lastCheckedTime = AbsoluteTime[], DistributedContexts -> Automatic];
   updateInterval = OptionValue["UpdateInterval"] * If[mapFunc === ParallelMap, $KernelCount, 1];
+  ParallelEvaluate[updateInterval = OptionValue["UpdateInterval"] * $KernelCount + $KernelID];
   printStatusUpdate[label, exprLength, globalStartTime][globalCounter];
   mapFunc[(
     If[localStartTime === Infinity, localStartTime = AbsoluteTime[]];
