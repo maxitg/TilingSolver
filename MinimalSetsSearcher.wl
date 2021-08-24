@@ -264,20 +264,25 @@ PatternSetToNumber[allPatterns_][set_] := Total @ (2^(Map[First @ FirstPosition[
 NumberToPatternSet[allPatterns_][number_] :=
   allPatterns[[First /@ Position[IntegerDigits[number, 2, Length[allPatterns]], 1]]];
 
-GenerateTilingSequence[allPatterns_, patternNumber_, init_, maxGridSize_, patternSize_] := With[{
+(* Zero implies its tileable to maxGridSize *)
+MinUntileablePowerOfTwo[allPatterns_, patternNumber_, init_, maxGridSize_, patternSize_] := With[{
     patterns = NumberToPatternSet[allPatterns][patternNumber]},
-  Last[
-    Replace[GenerateTiling[patterns, init, #], failure_ ? FailureQ :> Return[failure]] & /@
-      Select[# > patternSize &][2^Range[Ceiling @ Log2[maxGridSize]]]]
+  SelectFirst[
+    Select[# > patternSize &][2^Range[Ceiling @ Log2[maxGridSize]]],
+    FailureQ[GenerateTiling[patterns, init, #]] &,
+    0]
 ];
 
 SuccessfulTilings[allPatterns_, patternNumbers_, maxGridSize_, init_, patternSize_] := Module[{
-    tileableQ},
-  tileableQ = ParallelMapMonitored[
-    Not[FailureQ @ GenerateTilingSequence[allPatterns, #, init, maxGridSize, patternSize]] &,
+    minUntileablePowersOfTwo,
+    maskSizeString = StringRiffle[Join[ToString /@ $currentMaskSize, {$currentMaskID, $currentSetSize}], "-"]},
+  minUntileablePowersOfTwo = ParallelMapMonitored[
+    MinUntileablePowerOfTwo[allPatterns, #, init, maxGridSize, patternSize] &,
     patternNumbers,
-    "Label" -> ("Tiling size " <> ToString[Count[IntegerDigits[patternNumbers[[1]], 2], 1]])];
-  Pick[patternNumbers, tileableQ]
+    "Label" -> ("Tiling " <> maskSizeString)];
+  If[!DirectoryQ["untileable-sizes"], CreateDirectory["untileable-sizes"]];
+  Put[Association @ Thread[patternNumbers -> minUntileablePowersOfTwo], "untileable-sizes/" <> maskSizeString <> ".m"];
+  Pick[patternNumbers, EqualTo[0] /@ minUntileablePowersOfTwo]
 ];
 
 $symmetryTransforms = Composition @@@ Tuples[{
@@ -314,8 +319,8 @@ AddSymmetricPatterns[symmetryPermutations_, subsetSize_][numbers_] := Union[
   FromDigits[#, 2] & /@
     Catenate @ Outer[Permute, IntegerDigits[#, 2, subsetSize] & /@ numbers, symmetryPermutations, 1]];
 
-FindMinimalPatterns[allPatterns_, tilingDAG_, setSize_Integer, maxGridSize_ : 32, init_ : {}] := Block[{
-    newPatternsAsNumbers, successfulPatternsAsNumbers},
+FindMinimalPatterns[allPatterns_, tilingDAG_, setSize_Integer, maxGridSize_, init_ : {}] := Block[{
+    newPatternsAsNumbers, successfulPatternsAsNumbers, $currentSetSize = setSize},
   Print["Set size: ", setSize];
   newPatternsAsNumbers = TilingsIntsOfSize[allPatterns, setSize, tilingDAG];
   Print["Pattern sets to tile: ", Length @ newPatternsAsNumbers];
@@ -327,7 +332,7 @@ FindMinimalPatterns[allPatterns_, tilingDAG_, setSize_Integer, maxGridSize_ : 32
   NumberToPatternSet[allPatterns] /@ successfulPatternsAsNumbers
 ];
 
-FindTilingsSeq[allPatterns_, maxSetSize_Integer, filename_, maxGridSize_ : 32, init_ : {}] := Module[{
+FindTilingsSeq[allPatterns_, maxSetSize_Integer, filename_, maxGridSize_ : 64, init_ : {}] := Module[{
     tilingDAG = CreateTilingDAG[Length[allPatterns]], minimalSetsSoFar, maxSizeDone = 0},
   If[FileExistsQ[filename],
     minimalSetsSoFar = Import @ filename;
@@ -388,12 +393,12 @@ maskToAllPatterns[mask_] := With[{
   Function[functionBody] @@@ Tuples[{1, 0}, Count[Catenate[mask], 1]]
 ];
 
-FindMinimalSets[size_, maskID_] := Module[{allPatterns},
+FindMinimalSets[size_, maskID_] := Block[{$currentMaskSize = size, $currentMaskID = maskID}, Module[{allPatterns},
   allPatterns = maskToAllPatterns @ idToMask[size, maskID];
   FindTilingsSeq[allPatterns,
                  Length[allPatterns],
                  ToString[size[[1]]] <> "-" <> ToString[size[[2]]] <> "-" <> ToString[maskID] <> ".m"]
-];
+]];
 
 
 (* Main - FindMinimalPeriods *)
