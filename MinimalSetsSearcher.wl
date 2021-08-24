@@ -264,17 +264,17 @@ PatternSetToNumber[allPatterns_][set_] := Total @ (2^(Map[First @ FirstPosition[
 NumberToPatternSet[allPatterns_][number_] :=
   allPatterns[[First /@ Position[IntegerDigits[number, 2, Length[allPatterns]], 1]]];
 
-GenerateTilingSequence[allPatterns_, patternNumber_, init_, size_, patternSize_] := With[{
+GenerateTilingSequence[allPatterns_, patternNumber_, init_, maxGridSize_, patternSize_] := With[{
     patterns = NumberToPatternSet[allPatterns][patternNumber]},
   Last[
     Replace[GenerateTiling[patterns, init, #], failure_ ? FailureQ :> Return[failure]] & /@
-      {patternSize + 1, patternSize + 2, patternSize + 3, size}]
+      Select[# > patternSize &][2^Range[Ceiling @ Log2[maxGridSize]]]]
 ];
 
-SuccessfulTilings[allPatterns_, patternNumbers_, size_, init_, patternSize_] := Module[{
+SuccessfulTilings[allPatterns_, patternNumbers_, maxGridSize_, init_, patternSize_] := Module[{
     tileableQ},
   tileableQ = ParallelMapMonitored[
-    Not[FailureQ @ GenerateTilingSequence[allPatterns, #, init, size, patternSize]] &,
+    Not[FailureQ @ GenerateTilingSequence[allPatterns, #, init, maxGridSize, patternSize]] &,
     patternNumbers,
     "Label" -> ("Tiling size " <> ToString[Count[IntegerDigits[patternNumbers[[1]], 2], 1]])];
   Pick[patternNumbers, tileableQ]
@@ -314,20 +314,20 @@ AddSymmetricPatterns[symmetryPermutations_, subsetSize_][numbers_] := Union[
   FromDigits[#, 2] & /@
     Catenate @ Outer[Permute, IntegerDigits[#, 2, subsetSize] & /@ numbers, symmetryPermutations, 1]];
 
-FindMinimalPatterns[allPatterns_, tilingDAG_, setSize_Integer, size_ : 20, init_ : {}] := Block[{
+FindMinimalPatterns[allPatterns_, tilingDAG_, setSize_Integer, maxGridSize_ : 32, init_ : {}] := Block[{
     newPatternsAsNumbers, successfulPatternsAsNumbers},
   Print["Set size: ", setSize];
   newPatternsAsNumbers = TilingsIntsOfSize[allPatterns, setSize, tilingDAG];
   Print["Pattern sets to tile: ", Length @ newPatternsAsNumbers];
   successfulPatternsAsNumbers = AddSymmetricPatterns[GetSymmetryPermutations[allPatterns], Length[allPatterns]][
-    SuccessfulTilings[allPatterns, newPatternsAsNumbers, size, init, Max[Dimensions[First[allPatterns]]]]];
+    SuccessfulTilings[allPatterns, newPatternsAsNumbers, maxGridSize, init, Max[Dimensions[First[allPatterns]]]]];
   Print["Successful count: ", Length @ successfulPatternsAsNumbers];
   MapMonitored[SetTileable[tilingDAG, #] &, successfulPatternsAsNumbers, "Label" -> "Writing to tilingDAG"];
   SetUntileableUpToSize[tilingDAG, setSize];
   NumberToPatternSet[allPatterns] /@ successfulPatternsAsNumbers
 ];
 
-FindTilingsSeq[allPatterns_, maxSetSize_Integer, filename_, size_ : 20, init_ : {}] := Module[{
+FindTilingsSeq[allPatterns_, maxSetSize_Integer, filename_, maxGridSize_ : 32, init_ : {}] := Module[{
     tilingDAG = CreateTilingDAG[Length[allPatterns]], minimalSetsSoFar, maxSizeDone = 0},
   If[FileExistsQ[filename],
     minimalSetsSoFar = Import @ filename;
@@ -340,7 +340,7 @@ FindTilingsSeq[allPatterns_, maxSetSize_Integer, filename_, size_ : 20, init_ : 
     Put[{}, filename];
   ];
   Map[Module[{result},
-    result = FindMinimalPatterns[allPatterns, tilingDAG, #, size, init];
+    result = FindMinimalPatterns[allPatterns, tilingDAG, #, maxGridSize, init];
     Put[Append[Import[filename], result], filename];
     result
   ] &,
