@@ -285,11 +285,36 @@ SuccessfulTilings[allPatterns_, patternNumbers_, maxGridSize_, init_, patternSiz
   Pick[patternNumbers, EqualTo[0] /@ minUntileablePowersOfTwo]
 ];
 
+patternTrim[pattern_] := FixedPoint[Replace[{
+  {{Verbatim[_]...}, x___} :> {x},
+  {x___, {Verbatim[_]...}} :> {x},
+  x : {{Verbatim[_], ___}...} :> Rest /@ x,
+  x : {{___, Verbatim[_]}...} :> Most /@ x
+}], pattern];
+
 $symmetryTransforms = Composition @@@ Tuples[{
   {Identity, Reverse},
   {Identity, Map[Reverse]},
   {Identity, Transpose},
   {Identity, Replace[#, {0 -> 1, 1 -> 0}, {2}] &}}];
+
+shiftPatternRows[pattern_] :=
+  MapIndexed[Join[Table[_, (#2[[1]] - 1)], #, Table[_, (Length[pattern] - #2[[1]])]] &, pattern];
+
+$patternSymmetryGenerators = {Reverse, Transpose, shiftPatternRows, Replace[#, {0 -> 1, 1 -> 0}, {2}] &};
+
+GetSymmetryPermutations[allPatterns_] := Module[{transformedPatterns},
+  transformedPatterns = Select[Sort[#] === Sort[allPatterns] &] @ FixedPoint[
+    Union @ Join[
+      Catenate[
+        Function[patterns,
+          Select[AllTrue[Max[Dimensions[#]] <= Times @@ Dimensions[allPatterns[[1]]] &]] @
+            (patternTrim /@ # /@ patterns & /@ $patternSymmetryGenerators)
+        ] /@ #],
+      #] &,
+    {allPatterns}];
+  Sort @ Map[First @ FirstPosition[allPatterns, #] &, transformedPatterns, {2}]
+];
 
 CanonicalPatternSet[symmetryPermutations_, subsetSize_][subsetInt_] := With[{
     digits = IntegerDigits[subsetInt, 2, subsetSize]},
@@ -300,9 +325,6 @@ CanonicalPatternSetQ[symmetryPermutations_, subsetSize_][subsetInt_] := With[{
     digits = IntegerDigits[subsetInt, 2, subsetSize]},
   First[Sort[Permute[digits, #] & /@ symmetryPermutations]] === digits
 ];
-
-GetSymmetryPermutations[patterns_] := DeleteCases[{0...}] @ Map[
-  First @ FirstPosition[patterns, #, {0}] &, Function[transform, transform /@ patterns] /@ $symmetryTransforms, {2}];
 
 TilingsIntsOfSize[inputPatterns_, size_, tilingDAG_] := Module[{
     allSubsetInts, symmetryPermutations, allSubsets, canonicalQ, printCell},
