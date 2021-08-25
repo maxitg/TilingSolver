@@ -464,3 +464,36 @@ FindMinimalPeriods[maxPeriod_][size_, maskID_] := Module[{
   Print["Max: ", Max @ Cases[Catenate @ minimalPeriods, Except[_ ? MissingQ]]];
   minimalPeriods
 ];
+
+(* Maximal Sets *)
+
+maximalSetsFileName[size_, maskID_] :=
+  "maximal-sets/" <> ToString[size[[1]]] <> "-" <> ToString[size[[2]]] <> "-" <> ToString[maskID] <> ".m";
+
+ImportMaximalSets[size_, maskID_] := Import @ maximalSetsFileName[size, maskID];
+
+FindMaximalSets[bitCount_, minimalSets : {{___Integer}...}] := Module[{dag},
+  dag = CreateTilingDAG[bitCount];
+  MapMonitored[SetTileable[dag, #] &, Catenate @ minimalSets, "Label" -> "Writing tileable to DAG"];
+  MapMonitored[
+    WithCleanup[
+      UnknownSubsets[dag, #]
+    ,
+      SetUntileable[dag, #] & /@ UnknownSubsets[dag, #]
+    ] &,
+    Range[bitCount, 0, -1],
+    "Label" -> "Extracting untileable"]
+];
+
+FindMaximalSets[size_, maskID_] := Module[{allPatterns, minimalSets, maximalSets},
+  allPatterns = maskToAllPatterns[idToMask[size, maskID]];
+  minimalSets = ImportMinimalSets[size, maskID];
+  maximalSets = Map[NumberToPatternSet[allPatterns],
+                    FindMaximalSets[Length[allPatterns], Map[PatternSetToNumber[allPatterns], minimalSets, {2}]],
+                    {2}];
+  WriteString["stdout", "Writing to disk..."];
+  If[!DirectoryQ["maximal-sets"], CreateDirectory["maximal-sets"]];
+  Put[maximalSets, maximalSetsFileName[size, maskID]];
+  WriteString["stdout", " done\n"];
+  maximalSets
+];
