@@ -273,15 +273,24 @@ MinUntileablePowerOfTwo[allPatterns_, patternNumber_, init_, maxGridSize_, patte
     0]
 ];
 
+$minMinUntileableSizeToLog = 32;
+
 SuccessfulTilings[allPatterns_, patternNumbers_, maxGridSize_, init_, patternSize_] := Module[{
-    minUntileablePowersOfTwo,
-    maskSizeString = StringRiffle[Join[ToString /@ $currentMaskSize, {$currentMaskID, $currentSetSize}], "-"]},
+    minUntileablePowersOfTwo, sizesSoFar, sizesFilename, maskSizeString, sizesToWrite,
+    maskString = StringRiffle[Join[ToString /@ $currentMaskSize, {$currentMaskID}], "-"]},
+  maskSizeString = maskString <> "-" <> ToString[$currentSetSize];
   minUntileablePowersOfTwo = ParallelMapMonitored[
     MinUntileablePowerOfTwo[allPatterns, #, init, maxGridSize, patternSize] &,
     patternNumbers,
     "Label" -> ("Tiling " <> maskSizeString)];
   If[!DirectoryQ["untileable-sizes"], CreateDirectory["untileable-sizes"]];
-  Put[Association @ Thread[patternNumbers -> minUntileablePowersOfTwo], "untileable-sizes/" <> maskSizeString <> ".m"];
+  sizesFilename = "untileable-sizes/" <> maskString <> ".m";
+  sizesSoFar = If[FileExistsQ[sizesFilename], Import[sizesFilename], <||>];
+  sizesToWrite = Join[
+    sizesSoFar,
+    <|$currentSetSize -> KeyMap[NumberToPatternSet[allPatterns]] @ Select[# >= $minMinUntileableSizeToLog &] @
+      Association @ Thread[patternNumbers -> minUntileablePowersOfTwo]|>];
+  Put[sizesToWrite, sizesFilename];
   Pick[patternNumbers, EqualTo[0] /@ minUntileablePowersOfTwo]
 ];
 
