@@ -123,8 +123,7 @@ GenerateTiling[patterns : $patternsPattern,
                init : $statePattern,
                size_Integer,
                count_Integer : Automatic,
-               opts : OptionsPattern[]] /;
-      And @@ (And @@ (size > # & /@ Dimensions[#]) & /@ {patterns[[1]], init}) := Module[{
+               opts : OptionsPattern[]] := Module[{
     patternSize, verticalExtension, horizontalExtension, extendedPatternExpression, initExpression, i, j, variables,
     boundaryExpression, solutionList, initX, initY, singleTileLogicalExpression},
   patternSize = Dimensions[patterns[[1]]];
@@ -500,4 +499,63 @@ FindMaximalSets[size_, maskID_] := Module[{allPatterns, minimalSets, maximalSets
   Put[maximalSets, maximalSetsFileName[size, maskID]];
   WriteString["stdout", " done\n"];
   maximalSets
+];
+
+(* Max tileable sizes *)
+
+maxTileableSizesFileName[size_, maskID_] :=
+  "max-tileable-sizes/" <> ToString[size[[1]]] <> "-" <> ToString[size[[2]]] <> "-" <> ToString[maskID] <> ".m";
+
+ImportMaxTileableSizes[size_, maskID_] := Import @ maxTileableSizesFileName[size, maskID];
+
+TileableQ[patternSet_, size_] := Module[{result}, WithCleanup[
+  WriteString["stdout", " ", size],
+  result = Not @ FailureQ @ GenerateTiling[patternSet, {}, size],
+  WriteString["stdout", If[result, ">", "<"]]
+]];
+
+MaxTileableSize[patternSet_] := Module[{left = 0, right = 1, middle},
+  While[TileableQ[patternSet, right],
+    left = right;
+    right *= 2
+  ];
+  While[right - left > 1,
+    middle = Quotient[left + right, 2];
+    If[TileableQ[patternSet, middle], left = middle, right = middle];
+  ];
+  WriteString["stdout", " ", left];
+  left
+];
+
+MaxTileableSizeCached[allPatterns_][setNumber_] := MaxTileableSizeCached[allPatterns][setNumber] =
+  MaxTileableSize[NumberToPatternSet[allPatterns][setNumber]];
+
+FindMaxTileableSizes[size_, maskID_] := Module[{maximalSets},
+  allPatterns = maskToAllPatterns @ idToMask[size, maskID];
+  maximalSets = ImportMaximalSets[size, maskID];
+  maximalSetsAsNumbers = Map[PatternSetToNumber[allPatterns], maximalSets, {2}];
+  permutations = GetSymmetryPermutations[allPatterns];
+  maximalSizes = Table[(
+    WriteString["stdout",
+                "Tiling ",
+                currentSize,
+                "/",
+                Length[maximalSets],
+                " : ",
+                currentSet,
+                "/",
+                Length[maximalSets[[currentSize]]],
+                " :"];
+    WithCleanup[
+      MaxTileableSizeCached[allPatterns][
+        CanonicalPatternSet[permutations, Length[allPatterns]][maximalSetsAsNumbers[[currentSize, currentSet]]]]
+    ,
+      WriteString["stdout", "\n"];
+    ]
+  ), {currentSize, Length[maximalSets]}, {currentSet, Length[maximalSets[[currentSize]]]}];
+
+  If[!DirectoryQ["max-tileable-sizes"], CreateDirectory["max-tileable-sizes"]];
+  Put[maximalSizes, maxTileableSizesFileName[size, maskID]];
+  Print["Max: ", Max @ maximalSizes];
+  maximalSizes
 ];
