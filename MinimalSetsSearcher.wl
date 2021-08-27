@@ -265,7 +265,7 @@ UnknownSubsets[obj : TilingDAG[id_], size_] := unknownSubsetsOfSize[id, size];
 PatternSetToNumber[allPatterns_][set_] := Total @ (2^(Map[First @ FirstPosition[allPatterns, #] &, set, {1}] - 1));
 
 NumberToPatternSet[allPatterns_][number_] :=
-  allPatterns[[First /@ Position[IntegerDigits[number, 2, Length[allPatterns]], 1]]];
+  allPatterns[[First /@ Position[Reverse @ IntegerDigits[number, 2, Length[allPatterns]], 1]]];
 
 (* Zero implies its tileable to maxGridSize *)
 MinUntileablePowerOfTwo[allPatterns_, patternNumber_, init_, maxGridSize_, patternSize_] := With[{
@@ -473,7 +473,8 @@ FindMinimalPeriods[maxPeriod_][size_, maskID_] := Module[{
 maximalSetsFileName[size_, maskID_] :=
   "maximal-sets/" <> ToString[size[[1]]] <> "-" <> ToString[size[[2]]] <> "-" <> ToString[maskID] <> ".m";
 
-ImportMaximalSets[size_, maskID_] := Import @ maximalSetsFileName[size, maskID];
+ImportMaximalSets[size_, maskID_] :=
+  Map[NumberToPatternSet[maskToAllPatterns[idToMask[size, maskID]]], Import @ maximalSetsFileName[size, maskID], {2}];
 
 FindMaximalSets[bitCount_, minimalSets : {{___Integer}...}] := Module[{dag},
   dag = CreateTilingDAG[bitCount];
