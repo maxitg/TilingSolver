@@ -29,4 +29,18 @@ EXTERN_C DLLEXPORT int unknownCount(WolframLibraryData libData, mint argc, MArgu
 
 EXTERN_C DLLEXPORT int unknownSubsetsOfSize(WolframLibraryData libData, mint argc, MArgument* argv, MArgument result);
 
+EXTERN_C DLLEXPORT int sparseDAGInitialize(WolframLibraryData libData, mint argc, MArgument* argv, MArgument result);
+
+EXTERN_C DLLEXPORT int sparseDAGBitCount(WolframLibraryData libData, mint argc, MArgument* argv, MArgument result);
+
+EXTERN_C DLLEXPORT int currentSise(WolframLibraryData libData, mint argc, MArgument* argv, MArgument result);
+
+EXTERN_C DLLEXPORT int unknownSubsetsOfCurrentSize(
+    WolframLibraryData libData, mint argc, MArgument* argv, MArgument result);
+
+EXTERN_C DLLEXPORT int sparseDAGSetTileable(WolframLibraryData libData, mint argc, MArgument* argv, MArgument result);
+
+EXTERN_C DLLEXPORT int setRestUntileableAndIncrementSize(
+    WolframLibraryData libData, mint argc, MArgument* argv, MArgument result);
+
 #endif /* WolframLanguageAPI_hpp */

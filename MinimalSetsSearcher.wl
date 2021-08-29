@@ -197,37 +197,39 @@ CreateTilingDAG[bitCount_] := Module[{expr},
   expr
 ];
 
+$tilingDAGIcon = Graphics[
+  GraphicsComplex[
+    {{0.1, -3.31951456589972}, {-0.14816751450286603`, -2.625037331552915}, {0.6310524421714278, -1.3},
+     {0.9405108616213151, -2.8841601437046225`}, {0.4967448863824806, -2.092358403567382},
+     {-0.846735323402297, -1.466588600696043}, {0.8846460183439665, -0.5107506168284197},
+     {1.8939086566530445`, -2.50980168725566}, {1.756629266633539, -3.4622764737192444`},
+     {2.119361963550152, -2.99}, {-0.5709741939515942, -4.632295267644082},
+     {0.20977925607671288`, -4.647162049737781}, {-1.0861820131541373`, -4.047493574735101},
+     {-1.2223073729506904`, -2.2040562174063485`}},
+    {Hue[0.6, 0.7, 0.5],
+     Opacity[0.7],
+     Arrowheads[0.],
+     Arrow[
+       {{1, 2}, {1, 4}, {1, 11}, {1, 12}, {1, 13}, {2, 3}, {2, 4}, {2, 5}, {2, 6}, {2, 14}, {3, 4}, {3, 7}, {4, 5},
+        {4, 8}, {4, 9}, {8, 10}, {9, 10}},
+       0.0378698213750627],
+     {Hue[0.6, 0.2, 0.8], EdgeForm[{GrayLevel[0], Opacity[0.7]}], Disk[1, 0.05], Disk[2, 0.05], Disk[3, 0.05],
+      Disk[4, 0.05], Disk[5, 0.05], Disk[6, 0.05], Disk[7, 0.05], Disk[8, 0.05], Disk[9, 0.05], Disk[10, 0.05],
+      Disk[11, 0.05], Disk[12, 0.05], Disk[13, 0.05], Disk[14, 0.05]}}],
+  AspectRatio -> 1,
+  Background -> GrayLevel[0.93],
+  Frame -> True,
+  FrameStyle -> Directive[Opacity[0.5], Thickness[Tiny], RGBColor[0.368417, 0.506779, 0.709798]],
+  FrameTicks -> None,
+  ImagePadding -> 0,
+  ImageSize -> Dynamic[{Automatic, 3.5 (CurrentValue["FontCapHeight"]/AbsoluteCurrentValue[Magnification])}],
+  PlotRange -> {{-1.1, 2.4}, {-4.4, -0.7}}];
+
 TilingDAG /: MakeBoxes[object : TilingDAG[id_], format_] := ModuleScope[
   BoxForm`ArrangeSummaryBox[
     TilingDAG,
     object,
-    Graphics[
-      GraphicsComplex[
-        {{0.1, -3.31951456589972}, {-0.14816751450286603`, -2.625037331552915}, {0.6310524421714278, -1.3},
-         {0.9405108616213151, -2.8841601437046225`}, {0.4967448863824806, -2.092358403567382},
-         {-0.846735323402297, -1.466588600696043}, {0.8846460183439665, -0.5107506168284197},
-         {1.8939086566530445`, -2.50980168725566}, {1.756629266633539, -3.4622764737192444`},
-         {2.119361963550152, -2.99}, {-0.5709741939515942, -4.632295267644082},
-         {0.20977925607671288`, -4.647162049737781}, {-1.0861820131541373`, -4.047493574735101},
-         {-1.2223073729506904`, -2.2040562174063485`}},
-        {Hue[0.6, 0.7, 0.5],
-         Opacity[0.7],
-         Arrowheads[0.],
-         Arrow[
-           {{1, 2}, {1, 4}, {1, 11}, {1, 12}, {1, 13}, {2, 3}, {2, 4}, {2, 5}, {2, 6}, {2, 14}, {3, 4}, {3, 7}, {4, 5},
-            {4, 8}, {4, 9}, {8, 10}, {9, 10}},
-           0.0378698213750627],
-         {Hue[0.6, 0.2, 0.8], EdgeForm[{GrayLevel[0], Opacity[0.7]}], Disk[1, 0.05], Disk[2, 0.05], Disk[3, 0.05],
-          Disk[4, 0.05], Disk[5, 0.05], Disk[6, 0.05], Disk[7, 0.05], Disk[8, 0.05], Disk[9, 0.05], Disk[10, 0.05],
-          Disk[11, 0.05], Disk[12, 0.05], Disk[13, 0.05], Disk[14, 0.05]}}],
-      AspectRatio -> 1,
-      Background -> GrayLevel[0.93],
-      Frame -> True,
-      FrameStyle -> Directive[Opacity[0.5], Thickness[Tiny], RGBColor[0.368417, 0.506779, 0.709798]],
-      FrameTicks -> None,
-      ImagePadding -> 0,
-      ImageSize -> Dynamic[{Automatic, 3.5 (CurrentValue["FontCapHeight"]/AbsoluteCurrentValue[Magnification])}],
-      PlotRange -> {{-1.1, 2.4}, {-4.4, -0.7}}],
+    $tilingDAGIcon,
     (* Always displayed *)
     {{BoxForm`SummaryItem[{"Bit count: ", bitCount[id]}]},
      {BoxForm`SummaryItem[{"Tileable: ",
@@ -259,6 +261,60 @@ SetUntileableUpToSize[obj : TilingDAG[id_], size_] := (
 );
 
 UnknownSubsets[obj : TilingDAG[id_], size_] := unknownSubsetsOfSize[id, size];
+
+sparseDagInitialize = LibraryFunctionLoad[lib, "sparseDAGInitialize", {Integer, Integer}, "Void"];
+
+sparseDAGBitCount = LibraryFunctionLoad[lib, "sparseDAGBitCount", {Integer}, Integer];
+
+currentSize = LibraryFunctionLoad[lib, "currentSise", {Integer}, Integer];
+
+unknownSubsetsOfCurrentSize = LibraryFunctionLoad[lib, "unknownSubsetsOfCurrentSize", {Integer}, {Integer, 1}];
+
+sparseDAGSetTileable = LibraryFunctionLoad[lib, "sparseDAGSetTileable", {Integer, Integer}, "Void"];
+
+setRestUntileableAndIncrementSize = LibraryFunctionLoad[lib, "setRestUntileableAndIncrementSize", {Integer}, "Void"];
+
+SparseTilingDAG::usage = "SparseTilingDAG[$$] represents tileability information in a DAG of subsets.";
+
+CreateSparseTilingDAG[bitCount_] := Module[{expr},
+  expr = CreateManagedLibraryExpression["SparseTilingDAG", SparseTilingDAG];
+  sparseDagInitialize[First[expr], bitCount];
+  expr
+];
+
+SparseTilingDAG /: MakeBoxes[object : SparseTilingDAG[id_], format_] := ModuleScope[
+  BoxForm`ArrangeSummaryBox[
+    SparseTilingDAG,
+    object,
+    $tilingDAGIcon,
+    (* Always displayed *)
+    {{BoxForm`SummaryItem[{"Bit count: ", sparseDAGBitCount[id]}]},
+     {BoxForm`SummaryItem[{"Current size: ", currentSize[id]}]}},
+    (* Displayed on request *)
+    {},
+    format,
+    "Interpretable" -> Automatic
+  ]
+];
+
+BitCount[obj : SparseTilingDAG[id_]] := sparseDAGBitCount[id];
+
+CurrentSize[obj : SparseTilingDAG[id_]] := currentSize[id];
+
+UnknownSubsetsOfCurrentSize[obj : SparseTilingDAG[id_]] := Module[{halfLengthInts},
+  halfLengthInts = unknownSubsetsOfCurrentSize[id];
+  #[[1]] + #[[2]] * 2^32 & /@ Partition[halfLengthInts, {2}]
+];
+
+SetTileable[obj : SparseTilingDAG[id_], bitPattern_] := (
+  sparseDAGSetTileable[id, bitPattern];
+  obj
+);
+
+SetRestUntileableAndIncrementSize[obj : SparseTilingDAG[id_]] := (
+  setRestUntileableAndIncrementSize[id];
+  obj
+);
 
 (* Searcher *)
 
@@ -315,7 +371,7 @@ shiftPatternRows[pattern_] :=
 
 $patternSymmetryGenerators = {Reverse, Transpose, shiftPatternRows, Replace[#, {0 -> 1, 1 -> 0}, {2}] &};
 
-GetSymmetryPermutations[allPatterns_] := Module[{transformedPatterns},
+GetSymmetryPermutations[allPatterns_] := GetSymmetryPermutations[allPatterns] = Module[{transformedPatterns},
   transformedPatterns = Select[Sort[#] === Sort[allPatterns] &] @ FixedPoint[
     Union @ Join[
       Catenate[
@@ -338,10 +394,10 @@ CanonicalPatternSetQ[symmetryPermutations_, subsetSize_][subsetInt_] := With[{
   First[Sort[Permute[digits, #] & /@ symmetryPermutations]] === digits
 ];
 
-TilingsIntsOfSize[inputPatterns_, size_, tilingDAG_] := Module[{
+TilingsIntsOfSize[inputPatterns_, tilingDAG_] := Module[{
     allSubsetInts, symmetryPermutations, allSubsets, canonicalQ, printCell},
   (* Generate all subsets *)
-  allSubsetInts = UnknownSubsets[tilingDAG, size];
+  allSubsetInts = UnknownSubsetsOfCurrentSize[tilingDAG];
   symmetryPermutations = GetSymmetryPermutations[inputPatterns];
   Print["Found symmetries: ", Length @ symmetryPermutations];
   canonicalQ = ParallelMapMonitored[
@@ -353,37 +409,40 @@ AddSymmetricPatterns[symmetryPermutations_, subsetSize_][numbers_] := Union[
   FromDigits[#, 2] & /@
     Catenate @ Outer[Permute, IntegerDigits[#, 2, subsetSize] & /@ numbers, symmetryPermutations, 1]];
 
-FindMinimalPatterns[allPatterns_, tilingDAG_, setSize_Integer, maxGridSize_, init_ : {}] := Block[{
-    newPatternsAsNumbers, successfulPatternsAsNumbers, $currentSetSize = setSize},
-  Print["Set size: ", setSize];
-  newPatternsAsNumbers = TilingsIntsOfSize[allPatterns, setSize, tilingDAG];
+FindMinimalPatterns[allPatterns_, tilingDAG_, maxGridSize_, init_ : {}] := Block[{
+    newPatternsAsNumbers, successfulPatternsAsNumbers, $currentSetSize = CurrentSize[tilingDAG]},
+  Print["Set size: ", $currentSetSize];
+  newPatternsAsNumbers = TilingsIntsOfSize[allPatterns, tilingDAG];
   Print["Pattern sets to tile: ", Length @ newPatternsAsNumbers];
   successfulPatternsAsNumbers = AddSymmetricPatterns[GetSymmetryPermutations[allPatterns], Length[allPatterns]][
     SuccessfulTilings[allPatterns, newPatternsAsNumbers, maxGridSize, init, Max[Dimensions[First[allPatterns]]]]];
   Print["Successful count: ", Length @ successfulPatternsAsNumbers];
   MapMonitored[SetTileable[tilingDAG, #] &, successfulPatternsAsNumbers, "Label" -> "Writing to tilingDAG"];
-  SetUntileableUpToSize[tilingDAG, setSize];
+  SetRestUntileableAndIncrementSize[tilingDAG];
   NumberToPatternSet[allPatterns] /@ successfulPatternsAsNumbers
 ];
 
 FindTilingsSeq[allPatterns_, maxSetSize_Integer, filename_, maxGridSize_ : 64, init_ : {}] := Module[{
-    tilingDAG = CreateTilingDAG[Length[allPatterns]], minimalSetsSoFar, maxSizeDone = 0},
+    tilingDAG = CreateSparseTilingDAG[Length[allPatterns]], minimalSetsSoFar},
+  SetRestUntileableAndIncrementSize[tilingDAG]; (* go to size 1 *)
   If[FileExistsQ[filename],
     minimalSetsSoFar = Import @ filename;
-    maxSizeDone = Length @ minimalSetsSoFar;
-    MapMonitored[SetTileable[tilingDAG, #] &,
-                 PatternSetToNumber[allPatterns] /@ Catenate @ minimalSetsSoFar,
-                 "Label" -> "Initializing tilingDAG"];
-    SetUntileableUpToSize[tilingDAG, maxSizeDone];
+    MapMonitored[
+      Function[{minimalSets},
+        Scan[SetTileable[tilingDAG, PatternSetToNumber[allPatterns][#]] &, minimalSets];
+        SetRestUntileableAndIncrementSize[tilingDAG]
+      ],
+      minimalSetsSoFar,
+      "Label" -> "Initializing tiling DAG"];
   ,
     Put[{}, filename];
   ];
   Map[Module[{result},
-    result = FindMinimalPatterns[allPatterns, tilingDAG, #, maxGridSize, init];
+    result = FindMinimalPatterns[allPatterns, tilingDAG, maxGridSize, init];
     Put[Append[Import[filename], result], filename];
     result
   ] &,
-    Range[maxSizeDone + 1, maxSetSize]
+    Range[CurrentSize[tilingDAG], maxSetSize]
   ]
 ];
 

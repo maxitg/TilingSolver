@@ -9,6 +9,9 @@
 /* Begin PBXBuildFile section */
 		695F76D326C31411001DD628 /* TilingDAG.hpp in Headers */ = {isa = PBXBuildFile; fileRef = 695F76D226C31411001DD628 /* TilingDAG.hpp */; };
 		695F76D726C31411001DD628 /* TilingDAG.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 695F76D626C31411001DD628 /* TilingDAG.cpp */; };
+		6966E35B26DBD873000DB061 /* SparseTilingDAG.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 6966E35926DBD873000DB061 /* SparseTilingDAG.cpp */; };
+		6966E35C26DBD873000DB061 /* SparseTilingDAG.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 6966E35926DBD873000DB061 /* SparseTilingDAG.cpp */; };
+		6966E35D26DBD873000DB061 /* SparseTilingDAG.hpp in Headers */ = {isa = PBXBuildFile; fileRef = 6966E35A26DBD873000DB061 /* SparseTilingDAG.hpp */; };
 		69C3163A26C31A7D005253BF /* main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 69C3163926C31A7D005253BF /* main.cpp */; };
 		69C3163E26C31B05005253BF /* TilingDAG.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 695F76D626C31411001DD628 /* TilingDAG.cpp */; };
 		69C3164126C329CE005253BF /* WolframLanguageAPI.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 69C3163F26C329CE005253BF /* WolframLanguageAPI.cpp */; };
@@ -31,6 +34,8 @@
 		695F76CF26C31411001DD628 /* libTilingDAG.dylib */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.dylib"; includeInIndex = 0; path = libTilingDAG.dylib; sourceTree = BUILT_PRODUCTS_DIR; };
 		695F76D226C31411001DD628 /* TilingDAG.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TilingDAG.hpp; sourceTree = "<group>"; };
 		695F76D626C31411001DD628 /* TilingDAG.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = TilingDAG.cpp; sourceTree = "<group>"; };
+		6966E35926DBD873000DB061 /* SparseTilingDAG.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SparseTilingDAG.cpp; sourceTree = "<group>"; };
+		6966E35A26DBD873000DB061 /* SparseTilingDAG.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = SparseTilingDAG.hpp; sourceTree = "<group>"; };
 		69C3163726C31A7D005253BF /* test */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = test; sourceTree = BUILT_PRODUCTS_DIR; };
 		69C3163926C31A7D005253BF /* main.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = main.cpp; sourceTree = "<group>"; };
 		69C3163F26C329CE005253BF /* WolframLanguageAPI.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = WolframLanguageAPI.cpp; sourceTree = "<group>"; };
@@ -78,6 +83,8 @@
 			children = (
 				695F76D226C31411001DD628 /* TilingDAG.hpp */,
 				695F76D626C31411001DD628 /* TilingDAG.cpp */,
+				6966E35A26DBD873000DB061 /* SparseTilingDAG.hpp */,
+				6966E35926DBD873000DB061 /* SparseTilingDAG.cpp */,
 				69C3163F26C329CE005253BF /* WolframLanguageAPI.cpp */,
 				69C3164026C329CE005253BF /* WolframLanguageAPI.hpp */,
 			);
@@ -99,6 +106,7 @@
 			isa = PBXHeadersBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6966E35D26DBD873000DB061 /* SparseTilingDAG.hpp in Headers */,
 				69C3164226C329CE005253BF /* WolframLanguageAPI.hpp in Headers */,
 				695F76D326C31411001DD628 /* TilingDAG.hpp in Headers */,
 			);
@@ -182,6 +190,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6966E35B26DBD873000DB061 /* SparseTilingDAG.cpp in Sources */,
 				695F76D726C31411001DD628 /* TilingDAG.cpp in Sources */,
 				69C3164126C329CE005253BF /* WolframLanguageAPI.cpp in Sources */,
 			);
@@ -191,6 +200,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6966E35C26DBD873000DB061 /* SparseTilingDAG.cpp in Sources */,
 				69C3163A26C31A7D005253BF /* main.cpp in Sources */,
 				69C3163E26C31B05005253BF /* TilingDAG.cpp in Sources */,
 			);
