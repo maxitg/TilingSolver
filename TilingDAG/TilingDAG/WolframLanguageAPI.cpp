@@ -92,7 +92,7 @@ EXTERN_C int sparseDAGBitCount(WolframLibraryData libData, mint argc, MArgument*
   return LIBRARY_NO_ERROR;
 }
 
-EXTERN_C int currentSise(WolframLibraryData libData, mint argc, MArgument* argv, MArgument result) {
+EXTERN_C int currentSize(WolframLibraryData libData, mint argc, MArgument* argv, MArgument result) {
   if (argc != 1) return LIBRARY_FUNCTION_ERROR;
 
   try {
@@ -120,12 +120,13 @@ EXTERN_C int setTileable(WolframLibraryData libData, mint argc, MArgument* argv,
 }
 
 EXTERN_C int sparseDAGSetTileable(WolframLibraryData libData, mint argc, MArgument* argv, MArgument result) {
-  if (argc != 2) return LIBRARY_FUNCTION_ERROR;
+  if (argc != 3) return LIBRARY_FUNCTION_ERROR;
 
   try {
     SystemID thisSystemID = MArgument_getInteger(argv[0]);
-    unsigned patternBits = static_cast<unsigned>(MArgument_getInteger(argv[1]));
-    sparseTilingDAGs_[thisSystemID]->setTileable(patternBits);
+    uint64_t lowerBits = MArgument_getInteger(argv[1]);
+    uint64_t higherBits = MArgument_getInteger(argv[2]) << 32;
+    sparseTilingDAGs_[thisSystemID]->setTileable(lowerBits + higherBits);
   } catch (...) {
     return LIBRARY_FUNCTION_ERROR;
   }

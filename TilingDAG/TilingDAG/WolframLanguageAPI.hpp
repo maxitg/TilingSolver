@@ -33,7 +33,7 @@ EXTERN_C DLLEXPORT int sparseDAGInitialize(WolframLibraryData libData, mint argc
 
 EXTERN_C DLLEXPORT int sparseDAGBitCount(WolframLibraryData libData, mint argc, MArgument* argv, MArgument result);
 
-EXTERN_C DLLEXPORT int currentSise(WolframLibraryData libData, mint argc, MArgument* argv, MArgument result);
+EXTERN_C DLLEXPORT int currentSize(WolframLibraryData libData, mint argc, MArgument* argv, MArgument result);
 
 EXTERN_C DLLEXPORT int unknownSubsetsOfCurrentSize(
     WolframLibraryData libData, mint argc, MArgument* argv, MArgument result);

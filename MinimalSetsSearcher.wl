@@ -266,11 +266,11 @@ sparseDagInitialize = LibraryFunctionLoad[lib, "sparseDAGInitialize", {Integer, 
 
 sparseDAGBitCount = LibraryFunctionLoad[lib, "sparseDAGBitCount", {Integer}, Integer];
 
-currentSize = LibraryFunctionLoad[lib, "currentSise", {Integer}, Integer];
+currentSize = LibraryFunctionLoad[lib, "currentSize", {Integer}, Integer];
 
 unknownSubsetsOfCurrentSize = LibraryFunctionLoad[lib, "unknownSubsetsOfCurrentSize", {Integer}, {Integer, 1}];
 
-sparseDAGSetTileable = LibraryFunctionLoad[lib, "sparseDAGSetTileable", {Integer, Integer}, "Void"];
+sparseDAGSetTileable = LibraryFunctionLoad[lib, "sparseDAGSetTileable", {Integer, Integer, Integer}, "Void"];
 
 setRestUntileableAndIncrementSize = LibraryFunctionLoad[lib, "setRestUntileableAndIncrementSize", {Integer}, "Void"];
 
@@ -307,7 +307,7 @@ UnknownSubsetsOfCurrentSize[obj : SparseTilingDAG[id_]] := Module[{halfLengthInt
 ];
 
 SetTileable[obj : SparseTilingDAG[id_], bitPattern_] := (
-  sparseDAGSetTileable[id, bitPattern];
+  sparseDAGSetTileable[id, BitAnd[bitPattern, 2^32 - 1], BitShiftRight[bitPattern, 32]];
   obj
 );
 
