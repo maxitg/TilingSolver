@@ -400,7 +400,7 @@ TilingsIntsOfSize[inputPatterns_, tilingDAG_] := Module[{
   allSubsetInts = UnknownSubsetsOfCurrentSize[tilingDAG];
   symmetryPermutations = GetSymmetryPermutations[inputPatterns];
   Print["Found symmetries: ", Length @ symmetryPermutations];
-  canonicalQ = ParallelMapMonitored[
+  canonicalQ = MapMonitored[
     CanonicalPatternSetQ[symmetryPermutations, Length[inputPatterns]], allSubsetInts, "Label" -> "Canonicalizing"];
   Pick[allSubsetInts, canonicalQ]
 ];
