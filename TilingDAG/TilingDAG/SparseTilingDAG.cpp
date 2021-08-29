@@ -1,5 +1,6 @@
 #include "SparseTilingDAG.hpp"
 
+#include <functional>
 #include <unordered_set>
 
 class SparseTilingDAG::Implementation {
