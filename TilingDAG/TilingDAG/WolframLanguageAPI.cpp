@@ -3,8 +3,8 @@
 #include <memory>
 #include <unordered_map>
 
-#include "TilingDAG.hpp"
 #include "SparseTilingDAG.hpp"
+#include "TilingDAG.hpp"
 
 using SystemID = mint;
 std::unordered_map<SystemID, std::unique_ptr<TilingDAG>> tilingDAGs_;
@@ -162,8 +162,10 @@ EXTERN_C int setUntileableUpToSize(WolframLibraryData libData, mint argc, MArgum
   return LIBRARY_NO_ERROR;
 }
 
-EXTERN_C int setRestUntileableAndIncrementSize(
-    WolframLibraryData libData, mint argc, MArgument* argv, MArgument result) {
+EXTERN_C int setRestUntileableAndIncrementSize(WolframLibraryData libData,
+                                               mint argc,
+                                               MArgument* argv,
+                                               MArgument result) {
   if (argc != 1) return LIBRARY_FUNCTION_ERROR;
 
   try {

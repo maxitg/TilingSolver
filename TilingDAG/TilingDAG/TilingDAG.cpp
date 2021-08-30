@@ -1,9 +1,9 @@
 #include "TilingDAG.hpp"
 
 #include <cmath>
+#include <functional>
 #include <iostream>
 #include <vector>
-#include <functional>
 
 class TilingDAG::Implementation {
  private:
@@ -40,7 +40,7 @@ class TilingDAG::Implementation {
   }
 
   void setUntileableUpToSize(int size) {
-    scanUnknownSubsetsOfSize(size, [this](unsigned subset){
+    scanUnknownSubsetsOfSize(size, [this](unsigned subset) {
       knownUntileable_[subset] = true;
       ++knownUntileableCount_;
     });
@@ -64,9 +64,7 @@ class TilingDAG::Implementation {
 
   std::vector<unsigned> unknownSubsetsOfSize(int size) {
     std::vector<unsigned> result;
-    scanUnknownSubsetsOfSize(size, [&result](unsigned subset){
-      result.push_back(subset);
-    });
+    scanUnknownSubsetsOfSize(size, [&result](unsigned subset) { result.push_back(subset); });
     return result;
   }
 
@@ -76,8 +74,10 @@ class TilingDAG::Implementation {
     scanUnknownSubsetsOfSize(0, size, func, &visited);
   }
 
-  void scanUnknownSubsetsOfSize(
-      unsigned start, int remainingExtensions, const std::function<void(unsigned)>& func, std::vector<bool>* visited) {
+  void scanUnknownSubsetsOfSize(unsigned start,
+                                int remainingExtensions,
+                                const std::function<void(unsigned)>& func,
+                                std::vector<bool>* visited) {
     if ((*visited)[start] || knownTileable_[start]) return;
     (*visited)[start] = true;
     if (!remainingExtensions) {

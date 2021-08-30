@@ -9,7 +9,7 @@
 
 // Specifically designed for size-by-size evaluation.
 class SparseTilingDAG {
-public:
+ public:
   SparseTilingDAG(int bitCount);
   int bitCount();
   int currentSize();
@@ -19,7 +19,7 @@ public:
   void setTileable(uint64_t bits);
   void setRestUntileableAndIncrementSize();
 
-private:
+ private:
   class Implementation;
   std::shared_ptr<Implementation> implementation_;
 };

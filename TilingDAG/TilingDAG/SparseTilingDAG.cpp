@@ -4,12 +4,12 @@
 #include <unordered_set>
 
 class SparseTilingDAG::Implementation {
-private:
+ private:
   int bitCount_;
   int currentSize_ = 0;
   std::unordered_set<uint64_t> currentSizeTileable_;
 
-public:
+ public:
   Implementation(int bitCount) : bitCount_(bitCount) {}
   int bitCount() { return bitCount_; }
   int currentSize() { return currentSize_; }
@@ -22,9 +22,7 @@ public:
     return result;
   }
 
-  void setTileable(uint64_t bits) {
-    currentSizeTileable_.insert(bits);
-  }
+  void setTileable(uint64_t bits) { currentSizeTileable_.insert(bits); }
 
   void setRestUntileableAndIncrementSize() {
     std::unordered_set<uint64_t> nextSizeTileable;
@@ -39,7 +37,7 @@ public:
     ++currentSize_;
   }
 
-private:
+ private:
   static void enumerateSubsets(int supersetSize, int subsetSize, std::function<void(uint64_t)> process) {
     if (supersetSize > 64) throw std::runtime_error("enumerateSubsets: supersets over size 64 are not supported");
     if (subsetSize > supersetSize) {
@@ -48,7 +46,7 @@ private:
 
     uint64_t currentSubset = firstSubset(subsetSize);
 
-    while(!isLastSubset(supersetSize, currentSubset)) {
+    while (!isLastSubset(supersetSize, currentSubset)) {
       process(currentSubset);
       currentSubset = nextSubset(currentSubset);
     }
@@ -70,7 +68,8 @@ private:
     bool foundOne = false;
     for (int i = 0; i < supersetSize; ++i) {
       if (subset & currentDigit) foundOne = true;
-      else if (foundOne) return false;
+      else if (foundOne)
+        return false;
       currentDigit *= 2;
     }
     return true;
