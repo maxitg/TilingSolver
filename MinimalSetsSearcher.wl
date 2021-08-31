@@ -220,7 +220,7 @@ MinimalPeriodCached[allPatterns_, maxPeriod_][setNumber_] := MinimalPeriodCached
 
 (* Reporting *)
 
-PrintProgressForMask[{size_, maskID_}] := Module[{},
+ProgressForMask[{size_, maskID_}] := Module[{},
   fileName = "minimal-sets/" <> maskFileName[size, maskID];
   If[FileExistsQ[fileName],
     progressData = Import[fileName];
@@ -231,10 +231,11 @@ PrintProgressForMask[{size_, maskID_}] := Module[{},
     completedSizes = {0};
     sizeCountsList = {};
   ];
-  Print[size[[1]], "-", size[[2]], "-", maskID, ": ", Max[completedSizes], ": ", sizeCountsList];
+  ToString[size[[1]]] <> "-" <> ToString[size[[2]]] <> "-" <> ToString[maskID] <> ": " <>
+    ToString[Max[completedSizes]] <> ": " <> ToString[sizeCountsList]
 ];
 
-PrintProgressForMasks[masks_] := Scan[PrintProgressForMask, masks];
+ExportProgressForMasks[fileName_, masks_] := Export[fileName, Map[ProgressForMask, masks]];
 
 (* Main - FindMinimalSets *)
 
