@@ -73,57 +73,7 @@ mapFuncMonitored[mapFunc_, f_, expr_, o : OptionsPattern[]] := Module[{
   ) &, expr, FilterRules[{DistributedContexts -> Automatic, o, Options[ParallelMapMonitored]}, Options[mapFunc]]]
 ];
 
-ParallelMapMonitored[f_, expr_, o : OptionsPattern[]] := Module[{
-    globalCounter = 0, localCounter = 0, globalStartTime = Infinity, localStartTime = Infinity, exprLength,
-    lastCheckedTime, singleOutput, parallelLock, label, updateInterval, warningQ, result},
-  SetSharedVariable[globalCounter, globalStartTime];
-  exprLength = Length[expr];
-  label = If[StringQ[OptionValue["Label"]], OptionValue["Label"], "Evaluating ParallelMap"];
-  lastCheckedTime = AbsoluteTime[];
-  ParallelEvaluate[lastCheckedTime = AbsoluteTime[], DistributedContexts -> Automatic];
-  updateInterval = OptionValue["UpdateInterval"] * If[mapFunc === ParallelMap, $KernelCount, 1];
-  ParallelEvaluate[updateInterval = OptionValue["UpdateInterval"] * $KernelCount + $KernelID];
-  printStatusUpdate[label, exprLength, globalStartTime][globalCounter];
-  CreateDirectory["parallel-tasks"];
-  Table[
-    Put[expr[[Min[kernel, Length @ expr] ;; -1 ;; $KernelCount]], "parallel-tasks/task-" <> ToString[kernel] <> ".m"],
-    {kernel, $KernelCount}];
-  result = OperatorApplied[Take][Length @ expr] @ Catenate @ Transpose @ PadRight @ ParallelEvaluate[
-    myTasks = Import["parallel-tasks/task-" <> ToString[$KernelID] <> ".m"];
-    Map[(
-      If[localStartTime === Infinity, localStartTime = AbsoluteTime[]];
-      warningQ = False;
-      singleOutput = MemoryConstrained[
-        TimeConstrained[
-          If[OptionValue["Profile"], Timing, Identity][If[OptionValue["Debug"],
-            Quiet[Check[f[#], warningQ = True; f[#]]],
-            f[#]
-          ]],
-          OptionValue[TimeConstraint],
-          Message[ParallelMapMonitored::timo, #, label];
-          $Aborted
-        ],
-        OptionValue[MemoryConstraint],
-        Message[ParallelMapMonitored::memo, #, label];
-        $Aborted
-      ];
-      If[warningQ, Message[ParallelMapMonitored::warn, #, label]];
-      localCounter++;
-      If[AbsoluteTime[] - lastCheckedTime > updateInterval,
-        CriticalSection[{parallelLock},
-          globalStartTime = Min[globalStartTime, localStartTime];
-          globalCounter += localCounter;
-          printStatusUpdate[label, exprLength, globalStartTime][globalCounter];
-        ];
-        localCounter = 0;
-        lastCheckedTime = AbsoluteTime[];
-      ];
-      singleOutput
-    ) &, myTasks]
-  ];
-  DeleteDirectory["parallel-tasks", DeleteContents -> True];
-  result
-];
+ParallelMapMonitored[args___] := mapFuncMonitored[ParallelMap, args];
 
 MapMonitored[args___] := mapFuncMonitored[Map, args];
 
@@ -450,7 +400,7 @@ TilingsIntsOfSize[inputPatterns_, tilingDAG_] := Module[{
   allSubsetInts = UnknownSubsetsOfCurrentSize[tilingDAG];
   symmetryPermutations = GetSymmetryPermutations[inputPatterns];
   Print["Found symmetries: ", Length @ symmetryPermutations];
-  canonicalQ = ParallelMapMonitored[
+  canonicalQ = MapMonitored[
     CanonicalPatternSetQ[symmetryPermutations, Length[inputPatterns]], allSubsetInts, "Label" -> "Canonicalizing"];
   Pick[allSubsetInts, canonicalQ]
 ];
