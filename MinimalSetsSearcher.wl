@@ -249,7 +249,7 @@ FindMinimalSets[patterns : $patternsPattern, gridSize_Integer, fileName_String, 
       ++countsPerSize[setSize];
       If[OptionValue[ProgressReporting], WriteString["stdout", " ", countsPerSize[setSize]]];
     ];
-    If[OptionValue[ProgressReporting], [WriteString["stdout", "\n"]];
+    If[OptionValue[ProgressReporting], WriteString["stdout", "\n"]];
     completedSizes = Union[completedSizes, {setSize}];
     Put[<|"CompletedSizes" -> Sort @ completedSizes, "MinimalSets" -> Sort @ minimalSets|>, fileName];
   , {setSize, Complement[Range[0, Length @ patterns], completedSizes]}];
