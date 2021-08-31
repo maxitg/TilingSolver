@@ -226,13 +226,13 @@ ProgressForMask[{size_, maskID_}] := Module[{},
     progressData = Import[fileName];
     completedSizes = progressData["CompletedSizes"];
     sizeCounts = CountsBy[progressData["MinimalSets"], Count[IntegerDigits[#, 2], 1] &];
-    sizeCountsList = Lookup[sizeCounts, #, 0] & /@ Range[Max[completedSizes]];
+    sizeCountsList = Lookup[sizeCounts, #, 0] & /@ Range[Max[completedSizes] + 1];
   ,
     completedSizes = {0};
     sizeCountsList = {};
   ];
   ToString[size[[1]]] <> "-" <> ToString[size[[2]]] <> "-" <> ToString[maskID] <> ": " <>
-    ToString[Max[completedSizes]] <> ": " <> ToString[sizeCountsList]
+    ToString[Max[completedSizes] + 1] <> ": " <> ToString[sizeCountsList]
 ];
 
 ExportProgressForMasks[fileName_, masks_] := Export[fileName, Map[ProgressForMask, masks]];
