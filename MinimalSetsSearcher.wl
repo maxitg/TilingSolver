@@ -258,9 +258,10 @@ FindMinimalSets[patterns : $patternsPattern, gridSize_Integer, fileName_String, 
 
 $largeGridSize = 32;
 
-FindMinimalSets[size_, maskID_] := Block[{$currentMaskSize = size, $currentMaskID = maskID}, Module[{allPatterns},
+FindMinimalSets[size_, maskID_, opts : OptionsPattern[]] := Block[{
+    $currentMaskSize = size, $currentMaskID = maskID}, Module[{allPatterns},
   allPatterns = maskToAllPatterns @ idToMask[size, maskID];
-  FindMinimalSets[allPatterns, $largeGridSize, "minimal-sets/" <> maskFileName[size, maskID]]
+  FindMinimalSets[allPatterns, $largeGridSize, "minimal-sets/" <> maskFileName[size, maskID], opts]
 ]];
 
 (* Main - FindMinimalPeriods *)
