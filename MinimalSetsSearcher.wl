@@ -253,9 +253,10 @@ ClearAll[FindMinimalSets];
 Options[FindMinimalSets] = {ProgressReporting -> True, LoggingPeriod -> Quantity[1, "Minutes"]};
 FindMinimalSets[patterns : $patternsPattern, gridSize_Integer, fileName_String, OptionsPattern[]] /;
       And @@ Thread[gridSize > Dimensions[patterns[[1]]]] := Module[{
-    minimalSets, completedSizes, currentSet, countsPerSize, currentGridSize, latestDiskOperation},
+    minimalSets, completedSizes, currentSet, countsPerSize, currentGridSize, latestDiskOperation, symmetries, newSets},
+  symmetries = GetSymmetryPermutations[patterns];
   If[FileExistsQ[fileName],
-    minimalSets = Import[fileName]["MinimalSets"];
+    minimalSets = AddSymmetricPatterns[symmetries, Length @ patterns] @ Import[fileName]["MinimalSets"];
     completedSizes = Import[fileName]["CompletedSizes"];
   ,
     minimalSets = {};
@@ -272,12 +273,13 @@ FindMinimalSets[patterns : $patternsPattern, gridSize_Integer, fileName_String, 
         ++currentGridSize;
         If[OptionValue[ProgressReporting], WriteString["stdout", " \[FilledSquare]", currentGridSize]];
       ,
-        AppendTo[minimalSets, currentSet];
+        newSets = AddSymmetricPatterns[symmetries, Length @ patterns][{currentSet}];
+        minimalSets = Join[minimalSets, newSets];
         If[Now > latestDiskOperation + OptionValue[LoggingPeriod],
           Put[<|"CompletedSizes" -> Sort @ completedSizes, "MinimalSets" -> Sort @ minimalSets|>, fileName];
           latestDiskOperation = Now;
         ];
-        ++countsPerSize[setSize];
+        countsPerSize[setSize] += Length[newSets];
         If[OptionValue[ProgressReporting], WriteString["stdout", " ", countsPerSize[setSize]]];
       ];
     ];
