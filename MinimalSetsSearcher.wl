@@ -137,10 +137,11 @@ FindMinimalSet[patterns : $patternsPattern, knownMinimalSets : {_Integer...}, ma
   FromDigits[Boole @ Take[First @ solutionList, Length @ patterns], 2]
 ];
 
-PatternSetToNumber[allPatterns_][set_] := Total @ (2^(Map[First @ FirstPosition[allPatterns, #] &, set, {1}] - 1));
+PatternSetToNumber[allPatterns_][set_] :=
+  Total @ (2^(Map[First @ FirstPosition[Reverse @ allPatterns, #] &, set, {1}] - 1));
 
 NumberToPatternSet[allPatterns_][number_] :=
-  allPatterns[[First /@ Position[Reverse @ IntegerDigits[number, 2, Length[allPatterns]], 1]]];
+  allPatterns[[First /@ Position[IntegerDigits[number, 2, Length[allPatterns]], 1]]];
 
 (* Zero implies its tileable to maxGridSize *)
 MinUntileablePowerOfTwo[allPatterns_, patternNumber_, init_, maxGridSize_, patternSize_] := With[{
@@ -250,7 +251,7 @@ ClearAll[FindMinimalSets];
 Options[FindMinimalSets] = {ProgressReporting -> True};
 FindMinimalSets[patterns : $patternsPattern, gridSize_Integer, fileName_String, OptionsPattern[]] /;
       And @@ Thread[gridSize > Dimensions[patterns[[1]]]] := Module[{
-    minimalSets, completedSizes, currentSet, countsPerSize},
+    minimalSets, completedSizes, currentSet, countsPerSize, currentGridSize},
   If[FileExistsQ[fileName],
     minimalSets = Import[fileName]["MinimalSets"];
     completedSizes = Import[fileName]["CompletedSizes"];
@@ -260,13 +261,19 @@ FindMinimalSets[patterns : $patternsPattern, gridSize_Integer, fileName_String, 
   ];
   countsPerSize = Join[
     Association @ Thread[Range[0, Length @ patterns] -> 0], CountsBy[minimalSets, Count[IntegerDigits[#, 2], 1] &]];
+  currentGridSize = Max @ Dimensions[patterns[[1]]] + 1;
   Table[
     If[OptionValue[ProgressReporting], WriteString["stdout", "size ", setSize, ":"]];
-    While[!FailureQ[currentSet = FindMinimalSet[patterns, minimalSets, setSize, gridSize]],
-      AppendTo[minimalSets, currentSet];
-      Put[<|"CompletedSizes" -> Sort @ completedSizes, "MinimalSets" -> Sort @ minimalSets|>, fileName];
-      ++countsPerSize[setSize];
-      If[OptionValue[ProgressReporting], WriteString["stdout", " ", countsPerSize[setSize]]];
+    While[!FailureQ[currentSet = FindMinimalSet[patterns, minimalSets, setSize, currentGridSize]],
+      If[FailureQ[GenerateTiling[NumberToPatternSet[patterns][currentSet], {}, gridSize]],
+        ++currentGridSize;
+        If[OptionValue[ProgressReporting], WriteString["stdout", " \[FilledSquare]", currentGridSize]];
+      ,
+        AppendTo[minimalSets, currentSet];
+        Put[<|"CompletedSizes" -> Sort @ completedSizes, "MinimalSets" -> Sort @ minimalSets|>, fileName];
+        ++countsPerSize[setSize];
+        If[OptionValue[ProgressReporting], WriteString["stdout", " ", countsPerSize[setSize]]];
+      ];
     ];
     If[OptionValue[ProgressReporting], WriteString["stdout", "\n"]];
     completedSizes = Union[completedSizes, {setSize}];
