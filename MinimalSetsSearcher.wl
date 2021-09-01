@@ -247,11 +247,13 @@ maskToAllPatterns[mask_] := With[{
   Function[functionBody] @@@ Tuples[{1, 0}, Count[Catenate[mask], 1]]
 ];
 
+LoggingPeriod::usage = "Time period to do tiling between disk writes.";
+
 ClearAll[FindMinimalSets];
-Options[FindMinimalSets] = {ProgressReporting -> True};
+Options[FindMinimalSets] = {ProgressReporting -> True, LoggingPeriod -> Quantity[1, "Minutes"]};
 FindMinimalSets[patterns : $patternsPattern, gridSize_Integer, fileName_String, OptionsPattern[]] /;
       And @@ Thread[gridSize > Dimensions[patterns[[1]]]] := Module[{
-    minimalSets, completedSizes, currentSet, countsPerSize, currentGridSize},
+    minimalSets, completedSizes, currentSet, countsPerSize, currentGridSize, latestDiskOperation},
   If[FileExistsQ[fileName],
     minimalSets = Import[fileName]["MinimalSets"];
     completedSizes = Import[fileName]["CompletedSizes"];
@@ -259,6 +261,7 @@ FindMinimalSets[patterns : $patternsPattern, gridSize_Integer, fileName_String, 
     minimalSets = {};
     completedSizes = {0};
   ];
+  latestDiskOperation = Now;
   countsPerSize = Join[
     Association @ Thread[Range[0, Length @ patterns] -> 0], CountsBy[minimalSets, Count[IntegerDigits[#, 2], 1] &]];
   currentGridSize = Max @ Dimensions[patterns[[1]]] + 1;
@@ -270,7 +273,10 @@ FindMinimalSets[patterns : $patternsPattern, gridSize_Integer, fileName_String, 
         If[OptionValue[ProgressReporting], WriteString["stdout", " \[FilledSquare]", currentGridSize]];
       ,
         AppendTo[minimalSets, currentSet];
-        Put[<|"CompletedSizes" -> Sort @ completedSizes, "MinimalSets" -> Sort @ minimalSets|>, fileName];
+        If[Now > latestDiskOperation + OptionValue[LoggingPeriod],
+          Put[<|"CompletedSizes" -> Sort @ completedSizes, "MinimalSets" -> Sort @ minimalSets|>, fileName];
+          latestDiskOperation = Now;
+        ];
         ++countsPerSize[setSize];
         If[OptionValue[ProgressReporting], WriteString["stdout", " ", countsPerSize[setSize]]];
       ];
@@ -278,6 +284,7 @@ FindMinimalSets[patterns : $patternsPattern, gridSize_Integer, fileName_String, 
     If[OptionValue[ProgressReporting], WriteString["stdout", "\n"]];
     completedSizes = Union[completedSizes, {setSize}];
     Put[<|"CompletedSizes" -> Sort @ completedSizes, "MinimalSets" -> Sort @ minimalSets|>, fileName];
+    latestDiskOperation = Now;
   , {setSize, Complement[Range[0, Length @ patterns], completedSizes]}];
   minimalSets
 ];
