@@ -169,7 +169,7 @@ GetSymmetryPermutations[allPatterns_] := GetSymmetryPermutations[allPatterns] = 
     Union @ Join[
       Catenate[
         Function[patterns,
-          Select[AllTrue[Max[Dimensions[#]] <= Times @@ Dimensions[allPatterns[[1]]] &]] @
+          Select[AllTrue[Max[Dimensions[#]] <= Max @ Dimensions[allPatterns[[1]]] &]] @
             (patternTrim /@ # /@ patterns & /@ $patternSymmetryGenerators)
         ] /@ #],
       #] &,
