@@ -250,7 +250,7 @@ maskToAllPatterns[mask_] := With[{
 LoggingPeriod::usage = "Time period to do tiling between disk writes.";
 
 ClearAll[FindMinimalSets];
-Options[FindMinimalSets] = {ProgressReporting -> True, LoggingPeriod -> Quantity[1, "Minutes"]};
+Options[FindMinimalSets] = {LogChannel -> "stdout", LoggingPeriod -> Quantity[1, "Minutes"]};
 FindMinimalSets[patterns : $patternsPattern, gridSize_Integer, fileName_String, OptionsPattern[]] /;
       And @@ Thread[gridSize > Dimensions[patterns[[1]]]] := Module[{
     minimalSets, completedSizes, currentSet, countsPerSize, currentGridSize, latestDiskOperation, symmetries, newSets},
@@ -267,11 +267,11 @@ FindMinimalSets[patterns : $patternsPattern, gridSize_Integer, fileName_String, 
     Association @ Thread[Range[0, Length @ patterns] -> 0], CountsBy[minimalSets, Count[IntegerDigits[#, 2], 1] &]];
   currentGridSize = Max @ Dimensions[patterns[[1]]] + 1;
   Table[
-    If[OptionValue[ProgressReporting], WriteString["stdout", "size ", setSize, ":"]];
+    WriteString[OptionValue[LogChannel], "\nsize ", setSize, ":"];
     While[!FailureQ[currentSet = FindMinimalSet[patterns, minimalSets, setSize, currentGridSize]],
       If[FailureQ[GenerateTiling[NumberToPatternSet[patterns][currentSet], {}, gridSize]],
         ++currentGridSize;
-        If[OptionValue[ProgressReporting], WriteString["stdout", " \[FilledSquare]", currentGridSize]];
+        WriteString[OptionValue[LogChannel], " \[FilledSquare]", currentGridSize];
       ,
         newSets = AddSymmetricPatterns[symmetries, Length @ patterns][{currentSet}];
         minimalSets = Join[minimalSets, newSets];
@@ -280,10 +280,9 @@ FindMinimalSets[patterns : $patternsPattern, gridSize_Integer, fileName_String, 
           latestDiskOperation = Now;
         ];
         countsPerSize[setSize] += Length[newSets];
-        If[OptionValue[ProgressReporting], WriteString["stdout", " ", countsPerSize[setSize]]];
+        WriteString[OptionValue[LogChannel], " ", countsPerSize[setSize]];
       ];
     ];
-    If[OptionValue[ProgressReporting], WriteString["stdout", "\n"]];
     completedSizes = Union[completedSizes, {setSize}];
     Put[<|"CompletedSizes" -> Sort @ completedSizes, "MinimalSets" -> Sort @ minimalSets|>, fileName];
     latestDiskOperation = Now;
@@ -298,6 +297,12 @@ FindMinimalSets[size_, maskID_, opts : OptionsPattern[]] := Block[{
   allPatterns = maskToAllPatterns @ idToMask[size, maskID];
   FindMinimalSets[allPatterns, $largeGridSize, "minimal-sets/" <> maskFileName[size, maskID], opts]
 ]];
+
+ParallelFindMinimalSets[maskIDs_] := Module[{},
+  If[!DirectoryQ["log"], CreateDirectory["log"]];
+  ParallelMap[
+    FindMinimalSets[#[[1]], #[[2]], LogChannel -> File["log/minimal-sets/" <> maskFileName[#[[1]], #[[2]]]]] &, maskIDs]
+];
 
 (* Main - FindMinimalPeriods *)
 
