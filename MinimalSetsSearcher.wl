@@ -47,7 +47,7 @@ singlePatternExpressionToGrid[gridSize_][singleTileExpression_] := Module[{i, j}
 
 ClearAll[GenerateTiling];
 Options[GenerateTiling] = {Boundary -> "Any"};
-GenerateTiling[patterns : $patternsPattern,
+GenerateTiling[patterns : Except[{}, $patternsPattern],
                init : $statePattern,
                size : {_Integer, _Integer},
                count_Integer : Automatic,
@@ -115,11 +115,11 @@ disallowMinimalSetExpression[patternCount_Integer, minimalSet_Integer] := Module
   Not[And @@ TilingPattern /@ First /@ Position[IntegerDigits[minimalSet, 2, patternCount], 1]]
 ];
 
-ClearAll[FindMinimalSet];
-FindMinimalSet[patterns : $patternsPattern, knownMinimalSets : {_Integer...}, maxSetSize_Integer, gridSize_Integer] /;
+ClearAll[FindTileableSet];
+FindTileableSet[patterns : $patternsPattern, knownMinimalSets : {_Integer...}, gridSize_Integer] /;
       And @@ Thread[gridSize > Dimensions[patterns[[1]]]] := Module[{
     patternSize, extendedPatternExpression,
-    disableKnownMinimalSets, i, j, patternVariables, tileVariables, variables, maxSetSizeExpression, solutionList},
+    disableKnownMinimalSets, i, j, patternVariables, tileVariables, variables, solutionList},
   patternSize = Dimensions[patterns[[1]]];
   extendedPatternExpression = singlePatternExpressionToGrid[{gridSize, gridSize}][
     SingleTileFlaggedLogicalExpression[patterns]];
@@ -128,29 +128,34 @@ FindMinimalSet[patterns : $patternsPattern, knownMinimalSets : {_Integer...}, ma
   tileVariables = Catenate @ Table[
     Tile[i, j], {i, gridSize + patternSize[[1]] - 1}, {j, gridSize + patternSize[[2]] - 1}];
   variables = Join[patternVariables, tileVariables];
-  maxSetSizeExpression = BooleanCountingFunction[maxSetSize, Length @ patterns] @@ patternVariables;
   solutionList = SatisfiabilityInstances[
-    maxSetSizeExpression && disableKnownMinimalSets && extendedPatternExpression,
+    disableKnownMinimalSets && extendedPatternExpression,
     variables,
     Method -> "SAT"];
   If[solutionList === {}, Return[Failure["NotTileable", <||>], Module]];
   FromDigits[Boole @ Take[First @ solutionList, Length @ patterns], 2]
 ];
 
+MinUntileablePowerOfTwo[patterns_, maxGridSize_] :=
+  SelectFirst[FailureQ[GenerateTiling[patterns, {}, #]] &][
+    Select[# > Max[Dimensions[patterns[[1]]]] &][2^Range[Ceiling @ Log2[maxGridSize]]]];
+
+ClearAll[smallerTileableSet];
+smallerTileableSet[gridSize_][patterns_] :=
+  SelectFirst[! FailureQ[GenerateTiling[#, {}, gridSize]] &] @ Subsets[patterns, {Length[patterns] - 1}];
+
+ClearAll[ReduceToMinimalSet];
+ReduceToMinimalSet[gridSize_][patterns_] :=
+  FixedPoint[Replace[smallerTileableSet[gridSize][#], _ ? MissingQ -> #] &, patterns];
+
+ReduceToMinimalSet[allPatterns_, gridSize_Integer][initialSet_Integer] :=
+  PatternSetToNumber[allPatterns] @ ReduceToMinimalSet[gridSize] @ NumberToPatternSet[allPatterns][initialSet];
+
 PatternSetToNumber[allPatterns_][set_] :=
   Total @ (2^(Map[First @ FirstPosition[Reverse @ allPatterns, #] &, set, {1}] - 1));
 
 NumberToPatternSet[allPatterns_][number_] :=
   allPatterns[[First /@ Position[IntegerDigits[number, 2, Length[allPatterns]], 1]]];
-
-(* Zero implies its tileable to maxGridSize *)
-MinUntileablePowerOfTwo[allPatterns_, patternNumber_, init_, maxGridSize_, patternSize_] := With[{
-    patterns = NumberToPatternSet[allPatterns][patternNumber]},
-  SelectFirst[
-    Select[# > patternSize &][2^Range[Ceiling @ Log2[maxGridSize]]],
-    FailureQ[GenerateTiling[patterns, init, #]] &,
-    0]
-];
 
 patternTrim[pattern_] := FixedPoint[Replace[{
   {{Verbatim[_]...}, x___} :> {x},
@@ -191,7 +196,9 @@ AddSymmetricPatterns[symmetryPermutations_, subsetSize_][numbers_] := Union[
   FromDigits[#, 2] & /@
     Catenate @ Outer[Permute, IntegerDigits[#, 2, subsetSize] & /@ numbers, symmetryPermutations, 1]];
 
-maskFileName[size_, maskID_] := ToString[size[[1]]] <> "-" <> ToString[size[[2]]] <> "-" <> ToString[maskID] <> ".m";
+maskName[size_, maskID_] := ToString[size[[1]]] <> "-" <> ToString[size[[2]]] <> "-" <> ToString[maskID];
+
+maskFileName[size_, maskID_] := maskName[size, maskID] <> ".m";
 
 ImportMinimalSets[size_, maskID_] := Import["minimal-sets/" <> maskFileName[size, maskID]]["MinimalSets"];
 
@@ -249,44 +256,57 @@ maskToAllPatterns[mask_] := With[{
 
 LoggingPeriod::usage = "Time period to do tiling between disk writes.";
 
+logFindMinimalSetsStatus[maskName_, gridSize_, countsPerSize_, channel_] := WriteString[
+  channel,
+  maskName <> ": #" <> ToString[gridSize] <> ", " <> ToString[Total[countsPerSize]] <> ": " <>
+  Replace[countsPerSize, {0, data___, Longest[0 ...]} :> (StringRiffle[ToString /@ {data}, " "] <> " <- " <> ToString[Length[{data}]])] <>
+  "\n"];
+
+ExportMinimalSets[fileName_, completedSizes_, minimalSets_, minimalGridSize_, longFiniteTilers_] := Put[<|
+  "CompletedSizes" -> Sort @ completedSizes,
+  "MinimalSets" -> Sort @ minimalSets,
+  "MinimalGridSize" -> minimalGridSize,
+  "LongFiniteTilers" -> longFiniteTilers|>, fileName];
+
 ClearAll[FindMinimalSets];
 Options[FindMinimalSets] = {LogChannel -> "stdout", LoggingPeriod -> Quantity[1, "Minutes"]};
-FindMinimalSets[patterns : $patternsPattern, gridSize_Integer, fileName_String, OptionsPattern[]] /;
+FindMinimalSets[patterns : $patternsPattern, gridSize_Integer, maskName_String, fileName_String, OptionsPattern[]] /;
       And @@ Thread[gridSize > Dimensions[patterns[[1]]]] := Module[{
-    minimalSets, completedSizes, currentSet, countsPerSize, currentGridSize, latestDiskOperation, symmetries, newSets},
+    minimalSets, completedSizes, currentSet, minimalSet, countsPerSize, currentGridSize, latestDiskOperation,
+    symmetries, newSets, longFiniteTilers},
   symmetries = GetSymmetryPermutations[patterns];
   If[FileExistsQ[fileName],
     minimalSets = AddSymmetricPatterns[symmetries, Length @ patterns] @ Import[fileName]["MinimalSets"];
-    completedSizes = Import[fileName]["CompletedSizes"];
+    completedSizes = Lookup[Import[fileName], "CompletedSizes", {0}];
+    currentGridSize = Lookup[Import[fileName], "MinimalGridSize", Max @ Dimensions[patterns[[1]]] + 1];
+    longFiniteTilers = Lookup[Import[fileName], "LongFiniteTilers", <||>];
   ,
     minimalSets = {};
     completedSizes = {0};
+    currentGridSize = Max @ Dimensions[patterns[[1]]] + 1;
+    longFiniteTilers = <||>;
   ];
   latestDiskOperation = Now;
-  countsPerSize = Join[
+  countsPerSize = KeySort @ Join[
     Association @ Thread[Range[0, Length @ patterns] -> 0], CountsBy[minimalSets, Count[IntegerDigits[#, 2], 1] &]];
-  currentGridSize = Max @ Dimensions[patterns[[1]]] + 1;
-  Table[
-    WriteString[OptionValue[LogChannel], "\nsize ", setSize, ":"];
-    While[!FailureQ[currentSet = FindMinimalSet[patterns, minimalSets, setSize, currentGridSize]],
-      If[FailureQ[GenerateTiling[NumberToPatternSet[patterns][currentSet], {}, gridSize]],
-        ++currentGridSize;
-        WriteString[OptionValue[LogChannel], " #", currentGridSize];
-      ,
-        newSets = AddSymmetricPatterns[symmetries, Length @ patterns][{currentSet}];
-        minimalSets = Join[minimalSets, newSets];
-        If[Now > latestDiskOperation + OptionValue[LoggingPeriod],
-          Put[<|"CompletedSizes" -> Sort @ completedSizes, "MinimalSets" -> Sort @ minimalSets|>, fileName];
-          latestDiskOperation = Now;
-        ];
-        countsPerSize[setSize] += Length[newSets];
-        WriteString[OptionValue[LogChannel], " ", countsPerSize[setSize]];
+  While[!FailureQ[currentSet = FindTileableSet[patterns, minimalSets, currentGridSize]],
+    minimalSet = ReduceToMinimalSet[patterns, currentGridSize][currentSet];
+    If[FailureQ[GenerateTiling[NumberToPatternSet[patterns][minimalSet], {}, gridSize]],
+      longFiniteTilers[currentGridSize] = minimalSet;
+      ++currentGridSize;
+      logFindMinimalSetsStatus[maskName, currentGridSize, Values @ countsPerSize, OptionValue[LogChannel]];
+    ,
+      newSets = AddSymmetricPatterns[symmetries, Length @ patterns][{minimalSet}];
+      minimalSets = Join[minimalSets, newSets];
+      If[Now > latestDiskOperation + OptionValue[LoggingPeriod],
+        ExportMinimalSets[fileName, completedSizes, minimalSets, currentGridSize, longFiniteTilers];
+        latestDiskOperation = Now;
       ];
+      countsPerSize[Count[IntegerDigits[minimalSet, 2], 1]] += Length[newSets];
+      logFindMinimalSetsStatus[maskName, currentGridSize, Values @ countsPerSize, OptionValue[LogChannel]];
     ];
-    completedSizes = Union[completedSizes, {setSize}];
-    Put[<|"CompletedSizes" -> Sort @ completedSizes, "MinimalSets" -> Sort @ minimalSets|>, fileName];
-    latestDiskOperation = Now;
-  , {setSize, Complement[Range[0, Length @ patterns], completedSizes]}];
+  ];
+  ExportMinimalSets[fileName, Range[0, Length[patterns]], minimalSets, currentGridSize, longFiniteTilers];
   minimalSets
 ];
 
@@ -295,7 +315,8 @@ $largeGridSize = 32;
 FindMinimalSets[size_, maskID_, opts : OptionsPattern[]] := Block[{
     $currentMaskSize = size, $currentMaskID = maskID}, Module[{allPatterns},
   allPatterns = maskToAllPatterns @ idToMask[size, maskID];
-  FindMinimalSets[allPatterns, $largeGridSize, "minimal-sets/" <> maskFileName[size, maskID], opts]
+  FindMinimalSets[
+    allPatterns, $largeGridSize, maskName[size, maskID], "minimal-sets/" <> maskFileName[size, maskID], opts]
 ]];
 
 ParallelFindMinimalSets[maskIDs_] := Module[{},
