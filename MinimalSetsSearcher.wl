@@ -271,7 +271,7 @@ FindMinimalSets[patterns : $patternsPattern, gridSize_Integer, fileName_String, 
     While[!FailureQ[currentSet = FindMinimalSet[patterns, minimalSets, setSize, currentGridSize]],
       If[FailureQ[GenerateTiling[NumberToPatternSet[patterns][currentSet], {}, gridSize]],
         ++currentGridSize;
-        WriteString[OptionValue[LogChannel], " \[FilledSquare]", currentGridSize];
+        WriteString[OptionValue[LogChannel], " #", currentGridSize];
       ,
         newSets = AddSymmetricPatterns[symmetries, Length @ patterns][{currentSet}];
         minimalSets = Join[minimalSets, newSets];
