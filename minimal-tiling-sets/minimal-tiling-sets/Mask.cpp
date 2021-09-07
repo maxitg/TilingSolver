@@ -4,11 +4,35 @@
 
 #include <iostream>
 #include <optional>
+#include <queue>
 #include <sstream>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 namespace TilingSystem {
+using PatternSet = std::vector<std::vector<std::vector<int>>>;
+void hashCombine(size_t* seed, int value) {
+  (*seed) ^= std::hash<int>()(value) + 0x9e3779b9 + ((*seed) << 6) + ((*seed) >> 2);
+}
+
+struct PatternSetHash {
+  size_t operator()(const PatternSet& patternSet) const {
+    size_t seed = 0;
+    hashCombine(&seed, static_cast<int>(patternSet.size()));
+    for (const auto& pattern : patternSet) {
+      hashCombine(&seed, static_cast<int>(pattern.size()));
+      for (const auto& row : pattern) {
+        hashCombine(&seed, static_cast<int>(row.size()));
+        for (const auto cell : row) {
+          hashCombine(&seed, cell);
+        }
+      }
+    }
+    return seed;
+  }
+};
+
 class Mask::Implementation {
  private:
   std::pair<int, int> maskSize_;
@@ -22,6 +46,7 @@ class Mask::Implementation {
   int maxGridSize_ = -1;
   std::vector<int> patternVariables_;
   std::vector<std::vector<int>> cellVariables_;
+  std::vector<std::vector<int>> symmetries_;
 
  public:
   Implementation(const std::pair<int, int>& size, int id) : maskSize_(size), maskID_(id) {}
@@ -45,6 +70,152 @@ class Mask::Implementation {
     patternVariables_ = initPatternVariables(&solver_);
     cellVariables_ = initSpatialVariables(&solver_, currentGridSize_);
     initSpatialClauses(&solver_, std::nullopt, patternVariables_, cellVariables_);
+    initSymmetries();
+  }
+
+  void initSymmetries() {
+    PatternSet allPatterns;
+    for (int patternIndex = 0; patternIndex < patternCount_; ++patternIndex) {
+      allPatterns.push_back({});
+      int maskDigit = 1;
+      int patternDigit = 1;
+      for (int y = 0; y < maskSize_.first; ++y) {
+        allPatterns.back().push_back({});
+        for (int x = 0; x < maskSize_.second; ++x) {
+          if (maskID_ & maskDigit) {
+            allPatterns.back().back().push_back(patternIndex & patternDigit ? 1 : 0);
+            patternDigit <<= 1;
+          } else {
+            allPatterns.back().back().push_back(-1);
+          }
+          maskDigit <<= 1;
+        }
+      }
+    }
+
+    std::unordered_set<PatternSet, PatternSetHash> encounteredSets = {allPatterns};
+    std::queue<PatternSet> newSets;
+    newSets.push(allPatterns);
+
+    while (!newSets.empty()) {
+      const auto currentSet = newSets.front();
+      newSets.pop();
+      if (isMaskConsistent(currentSet)) addSymmetry(currentSet);
+      const auto transformedSets = {
+          flipZeroOne(currentSet), reverse(currentSet), transpose(currentSet), shiftRows(currentSet)};
+      for (const auto& transformedSet : transformedSets) {
+        if (transformedSet.has_value()) {
+          const auto insertionResult = encounteredSets.insert(transformedSet.value());
+          if (insertionResult.second) newSets.push(transformedSet.value());
+        }
+      }
+    }
+    std::cout << "Found " << symmetries_.size() << " symmetries." << std::endl;
+  }
+
+  static std::optional<PatternSet> flipZeroOne(const PatternSet& input) {
+    PatternSet output = input;
+    for (int i = 0; i < output.size(); ++i) {
+      for (int j = 0; j < output[i].size(); ++j) {
+        for (int k = 0; k < output[i][j].size(); ++k) {
+          if (output[i][j][k] == 0) output[i][j][k] = 1;
+          else if (output[i][j][k] == 1) output[i][j][k] = 0;
+        }
+      }
+    }
+    return output;
+  }
+
+  static std::optional<PatternSet> reverse(const PatternSet& input) {
+    PatternSet result = input;
+    for (auto& pattern : result) {
+      std::reverse(pattern.begin(), pattern.end());
+    }
+    return result;
+  }
+
+  static std::optional<PatternSet> transpose(const PatternSet& input) {
+    PatternSet result;
+    result.resize(input.size());
+    for (int i = 0; i < result.size(); ++i) {
+      result[i].resize(input[i][0].size());
+      for (int j = 0; j < result[i].size(); ++j) {
+        result[i][j].resize(input[i].size());
+        for (int k = 0; k < result[i][j].size(); ++k) {
+          result[i][j][k] = input[i][k][j];
+        }
+      }
+    }
+    return result;
+  }
+
+  static std::optional<PatternSet> shiftRows(const PatternSet& input) {
+    PatternSet result;
+    for (int i = 0; i < input.size(); ++i) {
+      result.push_back({});
+      for (int j = 0; j < input[i].size(); ++j) {
+        result.back().push_back({});
+        for (int k = 0; k < j; ++k) result.back().back().push_back(-1);
+        for (int k = 0; k < input[i][j].size(); ++k) result.back().back().push_back(input[i][j][k]);
+        for (int k = j + 1; k < input[i].size(); ++k) result.back().back().push_back(-1);
+      }
+
+      deleteColumns(&result.back(), maskedColumnsCount(result.back(), ColumnsToDelete::Front), ColumnsToDelete::Front);
+      deleteColumns(&result.back(), maskedColumnsCount(result.back(), ColumnsToDelete::Back), ColumnsToDelete::Back);
+      if (result.back().front().size() != input.back().front().size()) return std::nullopt;
+    }
+    return result;
+  }
+
+  enum class ColumnsToDelete { Front, Back };
+
+  static int maskedColumnsCount(const std::vector<std::vector<int>>& pattern, ColumnsToDelete frontOrBack) {
+    int maxCount = std::numeric_limits<int>::max();
+    for (const auto& row : pattern) {
+      int currentCount = 0;
+      if (frontOrBack == ColumnsToDelete::Front) {
+        for (int i = 0; i < row.size() && row[i] == -1; ++i) ++currentCount;
+      } else {
+        for (int i = static_cast<int>(row.size()) - 1; i >= 0 && row[i] == -1; --i) ++currentCount;
+      }
+      maxCount = std::min(maxCount, currentCount);
+    }
+    return maxCount;
+  }
+
+  static void deleteColumns(std::vector<std::vector<int>>* pattern, int count, ColumnsToDelete frontOrBack) {
+    for (auto& row : *pattern) {
+      if (frontOrBack == ColumnsToDelete::Front) std::reverse(row.begin(), row.end());
+      for (int i = 0; i < count; ++i) row.pop_back();
+      if (frontOrBack == ColumnsToDelete::Front) std::reverse(row.begin(), row.end());
+    }
+  }
+
+  bool isMaskConsistent(const PatternSet& transformedSet) {
+    for (const auto& pattern : transformedSet) {
+      int maskDigit = 1;
+      for (const auto& row : pattern) {
+        for (const auto value : row) {
+          if (!(maskID_ & maskDigit) && value != -1) return false;
+          maskDigit <<= 1;
+        }
+      }
+    }
+    return true;
+  }
+
+  void addSymmetry(const PatternSet& transformedSet) {
+    symmetries_.push_back({});
+    for (const auto& pattern : transformedSet) {
+      int index = 0;
+      for (const auto& row : pattern) {
+        for (const auto value : row) {
+          if (value == 0) index <<= 1;
+          else if (value == 1) index = (index | 1) << 1;
+        }
+      }
+      symmetries_.back().push_back(index);
+    }
   }
 
   std::vector<int> initPatternVariables(CMSat::SATSolver* solver) {
