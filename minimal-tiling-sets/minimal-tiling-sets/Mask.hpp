@@ -6,14 +6,14 @@
 
 namespace TilingSystem {
 class Mask {
-public:
+ public:
   Mask(const std::pair<int, int>& size, int id);
   const std::vector<std::vector<bool>>& minimalSets(int maxGridSize);
 
-private:
+ private:
   class Implementation;
   std::shared_ptr<Implementation> implementation_;
 };
-}
+}  // namespace TilingSystem
 
 #endif /* Mask_hpp */

@@ -1,16 +1,16 @@
 #include "Mask.hpp"
 
+#include <cryptominisat5/cryptominisat.h>
+
 #include <iostream>
 #include <optional>
-#include <vector>
-#include <thread>
 #include <sstream>
-
-#include <cryptominisat5/cryptominisat.h>
+#include <thread>
+#include <vector>
 
 namespace TilingSystem {
 class Mask::Implementation {
-private:
+ private:
   std::pair<int, int> maskSize_;
   int maskID_;
 
@@ -20,11 +20,10 @@ private:
   std::vector<std::vector<bool>> minimalSets_;
   bool isSolved_ = false;
   int maxGridSize_ = -1;
-  int lastVariable_;
   std::vector<int> patternVariables_;
   std::vector<std::vector<int>> cellVariables_;
 
-public:
+ public:
   Implementation(const std::pair<int, int>& size, int id) : maskSize_(size), maskID_(id) {}
 
   const std::vector<std::vector<bool>>& minimalSets(int maxGridSize) {
@@ -36,39 +35,39 @@ public:
     return minimalSets_;
   }
 
-private:
+ private:
   void init() {
     patternCount_ = 1 << bitCount(maskID_);
-    currentGridSize_ = 2;
+    currentGridSize_ = 1;
     solver_.set_num_threads(std::thread::hardware_concurrency());
     minimalSets_ = {};
     isSolved_ = false;
-    lastVariable_ = -1;
-    initPatternVariables();
-    initSpatialVariables();
-    initSpatialClauses();
+    patternVariables_ = initPatternVariables(&solver_);
+    cellVariables_ = initSpatialVariables(&solver_, currentGridSize_);
+    initSpatialClauses(&solver_, std::nullopt, patternVariables_, cellVariables_);
   }
 
-  int makeVariable() {
-    solver_.new_var();
-    return ++lastVariable_;
-  }
-
-  void initPatternVariables() {
-    patternVariables_.resize(patternCount_);
-    for (int i = 0; i < patternVariables_.size(); ++i) {
-      patternVariables_[i] = makeVariable();
+  std::vector<int> initPatternVariables(CMSat::SATSolver* solver) {
+    std::vector<int> patternVariables;
+    patternVariables.reserve(patternCount_);
+    for (int i = 0; i < patternCount_; ++i) {
+      solver->new_var();
+      patternVariables.push_back(solver->nVars() - 1);
     }
+    return patternVariables;
   }
 
-  void initSpatialVariables() {
-    cellVariables_.resize(currentGridSize_ + maskSize_.first - 1);
-    for (int i = 0; i < cellVariables_.size(); ++i) {
-      cellVariables_[i].resize(currentGridSize_ + maskSize_.second - 1);
-      for (int j = 0; j < cellVariables_[i].size(); ++j) {
-        cellVariables_[i][j] = makeVariable();
+  std::vector<std::vector<int>> initSpatialVariables(CMSat::SATSolver* solver, int gridSize) {
+    std::vector<std::vector<int>> cellVariables;
+    cellVariables.resize(gridSize + maskSize_.first - 1);
+    for (int i = 0; i < cellVariables.size(); ++i) {
+      cellVariables[i].resize(gridSize + maskSize_.second - 1);
+      for (int j = 0; j < cellVariables[i].size(); ++j) {
+        solver->new_var();
+        cellVariables[i][j] = solver->nVars() - 1;
       }
     }
+    return cellVariables;
   }
 
   static void printClause(const std::vector<CMSat::Lit>& clause) {
@@ -79,39 +78,56 @@ private:
     std::cout << std::endl;
   }
 
-  void initSpatialClauses() {
-    for (int y = 0; y < currentGridSize_; ++y) {
-      for (int x = 0; x < currentGridSize_; ++x) {
-        std::vector<int> patternClauseVariables;
-        for (int patternIndex = 0; patternIndex < patternCount_; ++patternIndex) {
-          int clauseVariable = makeVariable();
-          patternClauseVariables.push_back(clauseVariable);
-          std::vector<CMSat::Lit> longClause;
-          const auto clauseLit = CMSat::Lit(clauseVariable, false);
-          const auto patternLit = CMSat::Lit(patternVariables_[patternIndex], false);
-          longClause.push_back(clauseLit);
-          longClause.push_back(~patternLit);
-          solver_.add_clause({~clauseLit, patternLit});
-          int patternDigit = 1;
-          for (int maskY = 0; maskY < maskSize_.first; ++maskY) {
-            for (int maskX = 0; maskX < maskSize_.second; ++maskX) {
-              if ((maskID_ >> (maskY * maskSize_.second + maskX)) & 1) {
-                auto cellLit = CMSat::Lit(cellVariables_[y + maskY][x + maskX], !(patternIndex & patternDigit));
-                longClause.push_back(~cellLit);
-                solver_.add_clause({~clauseLit, cellLit});
-                patternDigit <<= 1;
-              }
-            }
-          }
-          solver_.add_clause(longClause);
-        }
-        std::vector<CMSat::Lit> entireTileClause;
-        for (const auto clauseVariable : patternClauseVariables) {
-          entireTileClause.push_back(CMSat::Lit(clauseVariable, false));
-        }
-        solver_.add_clause(entireTileClause);
+  // pattern variables are only used if set is a nullopt. Otherwise, unset tiles are skipped.
+  void initSpatialClauses(CMSat::SATSolver* solver,
+                          const std::optional<std::vector<bool>>& set,
+                          const std::optional<std::vector<int>>& patternVariables,
+                          const std::vector<std::vector<int>>& cellVariables) const {
+    for (int y = 0; y < cellVariables.size() - (maskSize_.first - 1); ++y) {
+      for (int x = 0; x < cellVariables[y].size() - (maskSize_.second - 1); ++x) {
+        initSpatialClausesAt(solver, set, patternVariables, cellVariables, y, x);
       }
     }
+  }
+
+  void initSpatialClausesAt(CMSat::SATSolver* solver,
+                            const std::optional<std::vector<bool>>& set,
+                            const std::optional<std::vector<int>>& patternVariables,
+                            const std::vector<std::vector<int>>& cellVariables,
+                            int y,
+                            int x) const {
+    std::vector<int> patternClauseVariables;
+    for (int patternIndex = 0; patternIndex < patternCount_; ++patternIndex) {
+      if (set && !set.value().at(patternIndex)) continue;
+      solver->new_var();
+      int clauseVariable = solver->nVars() - 1;
+      patternClauseVariables.push_back(clauseVariable);
+      std::vector<CMSat::Lit> longClause;
+      const auto clauseLit = CMSat::Lit(clauseVariable, false);
+      longClause.push_back(clauseLit);
+      if (patternVariables) {
+        const auto patternLit = CMSat::Lit(patternVariables.value()[patternIndex], false);
+        longClause.push_back(~patternLit);
+        solver->add_clause({~clauseLit, patternLit});
+      }
+      int patternDigit = 1;
+      for (int maskY = 0; maskY < maskSize_.first; ++maskY) {
+        for (int maskX = 0; maskX < maskSize_.second; ++maskX) {
+          if ((maskID_ >> (maskY * maskSize_.second + maskX)) & 1) {
+            auto cellLit = CMSat::Lit(cellVariables[y + maskY][x + maskX], !(patternIndex & patternDigit));
+            longClause.push_back(~cellLit);
+            solver->add_clause({~clauseLit, cellLit});
+            patternDigit <<= 1;
+          }
+        }
+      }
+      solver->add_clause(longClause);
+    }
+    std::vector<CMSat::Lit> entireTileClause;
+    for (const auto clauseVariable : patternClauseVariables) {
+      entireTileClause.push_back(CMSat::Lit(clauseVariable, false));
+    }
+    solver->add_clause(entireTileClause);
   }
 
   int bitCount(int number) {
@@ -171,13 +187,46 @@ private:
     return str.str();
   }
 
-  bool isTileableToMaxSize(const std::vector<bool>& set) { return true; }
-  void minimizeSet(std::vector<bool>* set) {}
-  void incrementGridSize() {}
+  bool isTileableToMaxSize(const std::vector<bool>& set) {
+    CMSat::SATSolver solver;
+    initSpatialClauses(&solver, set, std::nullopt, initSpatialVariables(&solver, maxGridSize_));
+    return solver.solve() == CMSat::l_True;
+  }
+
+  void incrementGridSize() {
+    ++currentGridSize_;
+    std::cout << " #" << currentGridSize_;
+
+    for (int y = 0; y < currentGridSize_ + maskSize_.first - 2; ++y) {
+      solver_.new_var();
+      cellVariables_[y].push_back(solver_.nVars() - 1);
+    }
+    cellVariables_.push_back({});
+    for (int x = 0; x < currentGridSize_ + maskSize_.second - 1; ++x) {
+      solver_.new_var();
+      cellVariables_.back().push_back(solver_.nVars() - 1);
+    }
+
+    for (int i = 0; i < currentGridSize_ - 1; ++i) {
+      initSpatialClausesAt(&solver_, std::nullopt, patternVariables_, cellVariables_, i, currentGridSize_ - 1);
+      initSpatialClausesAt(&solver_, std::nullopt, patternVariables_, cellVariables_, currentGridSize_ - 1, i);
+    }
+    initSpatialClausesAt(
+        &solver_, std::nullopt, patternVariables_, cellVariables_, currentGridSize_ - 1, currentGridSize_ - 1);
+  }
+
+  void minimizeSet(std::vector<bool>* set) {
+    for (int i = 0; i < set->size(); ++i) {
+      if (set->at(i)) {
+        (*set)[i] = false;
+        if (!isTileableToMaxSize(*set)) (*set)[i] = true;
+      }
+    }
+  }
 };
 
 Mask::Mask(const std::pair<int, int>& size, int id) : implementation_(std::make_shared<Implementation>(size, id)) {}
 const std::vector<std::vector<bool>>& Mask::minimalSets(int maxGridSize) {
   return implementation_->minimalSets(maxGridSize);
 }
-}
+}  // namespace TilingSystem
