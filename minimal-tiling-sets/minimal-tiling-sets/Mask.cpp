@@ -70,6 +70,7 @@ class Mask::Implementation {
     isSolved_ = false;
     patternVariables_ = initPatternVariables(&solver_);
     cellVariables_ = initSpatialVariables(&solver_, currentGridSize_);
+    solver_.add_clause({CMSat::Lit(cellVariables_[0][0], false)});
     initSpatialClauses(&solver_, std::nullopt, patternVariables_, cellVariables_);
     initSymmetries();
   }
