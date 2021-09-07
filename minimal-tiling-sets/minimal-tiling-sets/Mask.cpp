@@ -211,7 +211,7 @@ class Mask::Implementation {
       for (const auto& row : pattern) {
         for (const auto value : row) {
           if (value == 0) index <<= 1;
-          else if (value == 1) index = (index | 1) << 1;
+          else if (value == 1) index = (index << 1) | 1;
         }
       }
       symmetries_.back().push_back(index);
@@ -317,14 +317,29 @@ class Mask::Implementation {
       if (isTileableToMaxSize(possibleMinimalSet.value())) {
         auto minimalSet = possibleMinimalSet.value();
         minimizeSet(&minimalSet);
-        minimalSets_.push_back(minimalSet);
-        std::cout << std::endl << setDescription(minimalSet);
-        forbidMinimalSet(minimalSet);
+        addAndForbidSymmetricSets(minimalSet);
+        std::cout << " " << minimalSets_.size();
+        std::cout.flush();
       } else {
         incrementGridSize();
       }
     }
     std::cout << std::endl;
+  }
+
+  void addAndForbidSymmetricSets(const std::vector<bool>& set) {
+    std::unordered_set<std::vector<bool>> transformedSets;
+    for (const auto& symmetry : symmetries_) {
+      std::vector<bool> transformedSet;
+      for (int i = 0; i < set.size(); ++i) {
+        transformedSet.push_back(set[symmetry[i]]);
+      }
+      transformedSets.insert(transformedSet);
+    }
+    for (const auto& transformedSet : transformedSets) {
+      minimalSets_.push_back(transformedSet);
+      forbidMinimalSet(transformedSet);
+    }
   }
 
   std::optional<std::vector<bool>> findSet() {
@@ -368,6 +383,7 @@ class Mask::Implementation {
   void incrementGridSize() {
     ++currentGridSize_;
     std::cout << " #" << currentGridSize_;
+    std::cout.flush();
 
     for (int y = 0; y < currentGridSize_ + maskSize_.first - 2; ++y) {
       solver_.new_var();
