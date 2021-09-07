@@ -189,6 +189,7 @@ class Mask::Implementation {
 
   bool isTileableToMaxSize(const std::vector<bool>& set) {
     CMSat::SATSolver solver;
+    solver.set_num_threads(std::thread::hardware_concurrency());
     initSpatialClauses(&solver, set, std::nullopt, initSpatialVariables(&solver, maxGridSize_));
     return solver.solve() == CMSat::l_True;
   }
