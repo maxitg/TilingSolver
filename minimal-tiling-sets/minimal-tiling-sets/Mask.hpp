@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <utility>
+#include <vector>
 
 namespace TilingSystem {
 class Mask {

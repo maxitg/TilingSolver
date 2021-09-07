@@ -2,6 +2,7 @@
 
 #include <cryptominisat5/cryptominisat.h>
 
+#include <algorithm>
 #include <iostream>
 #include <optional>
 #include <queue>
