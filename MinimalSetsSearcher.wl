@@ -310,7 +310,7 @@ FindMinimalSets[patterns : $patternsPattern, gridSize_Integer, maskName_String, 
   minimalSets
 ];
 
-$largeGridSize = 32;
+$largeGridSize = 45;
 
 FindMinimalSets[size_, maskID_, opts : OptionsPattern[]] := Block[{
     $currentMaskSize = size, $currentMaskID = maskID}, Module[{allPatterns},
