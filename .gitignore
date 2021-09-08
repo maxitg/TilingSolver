@@ -26,9 +26,10 @@ xcuserdata/
 
 LibraryResources/
 
-# Built paclets
+# Build products
 
 BuiltPaclets/
+bin/
 
 # CMake build directory
 
