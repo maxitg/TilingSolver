@@ -3,6 +3,7 @@
 #include <cryptominisat5/cryptominisat.h>
 
 #include <algorithm>
+#include <iomanip>
 #include <iostream>
 #include <optional>
 #include <queue>
@@ -38,11 +39,14 @@ class Mask::Implementation {
  private:
   std::pair<int, int> maskSize_;
   int maskID_;
+  LoggingParameters loggingParameters_;
 
   int patternCount_;
   int currentGridSize_;
   CMSat::SATSolver solver_;
   std::vector<std::vector<bool>> minimalSets_;
+  std::vector<int> countsPerSetSize_;
+  int maxSetSize_;
   bool isSolved_ = false;
   int maxGridSize_ = -1;
   std::vector<int> patternVariables_;
@@ -50,7 +54,8 @@ class Mask::Implementation {
   std::vector<std::vector<int>> symmetries_;
 
  public:
-  Implementation(const std::pair<int, int>& size, int id) : maskSize_(size), maskID_(id) {}
+  Implementation(const std::pair<int, int>& size, int id, const LoggingParameters& loggingParameters)
+      : maskSize_(size), maskID_(id), loggingParameters_(loggingParameters) {}
 
   const std::vector<std::vector<bool>>& minimalSets(int maxGridSize) {
     if (maxGridSize_ != maxGridSize) {
@@ -67,6 +72,8 @@ class Mask::Implementation {
     currentGridSize_ = 1;
     solver_.set_num_threads(std::thread::hardware_concurrency());
     minimalSets_ = {};
+    maxSetSize_ = 0;
+    countsPerSetSize_ = std::vector<int>(patternCount_, 0);
     isSolved_ = false;
     patternVariables_ = initPatternVariables(&solver_);
     cellVariables_ = initSpatialVariables(&solver_, currentGridSize_);
@@ -111,7 +118,7 @@ class Mask::Implementation {
         }
       }
     }
-    std::cout << "Found " << symmetries_.size() << " symmetries." << std::endl;
+    printWithTimeAndMask("Found " + std::to_string(symmetries_.size()) + " symmetries.");
   }
 
   static std::optional<PatternSet> flipZeroOne(const PatternSet& input) {
@@ -120,7 +127,8 @@ class Mask::Implementation {
       for (int j = 0; j < output[i].size(); ++j) {
         for (int k = 0; k < output[i][j].size(); ++k) {
           if (output[i][j][k] == 0) output[i][j][k] = 1;
-          else if (output[i][j][k] == 1) output[i][j][k] = 0;
+          else if (output[i][j][k] == 1)
+            output[i][j][k] = 0;
         }
       }
     }
@@ -194,8 +202,10 @@ class Mask::Implementation {
 
   bool isMaskConsistent(const PatternSet& transformedSet) {
     for (const auto& pattern : transformedSet) {
+      if (maskSize_.first != pattern.size()) return false;
       int maskDigit = 1;
       for (const auto& row : pattern) {
+        if (maskSize_.second != row.size()) return false;
         for (const auto value : row) {
           if (!(maskID_ & maskDigit) && value != -1) return false;
           maskDigit <<= 1;
@@ -209,10 +219,11 @@ class Mask::Implementation {
     symmetries_.push_back({});
     for (const auto& pattern : transformedSet) {
       int index = 0;
-      for (const auto& row : pattern) {
-        for (const auto value : row) {
-          if (value == 0) index <<= 1;
-          else if (value == 1) index = (index << 1) | 1;
+      for (auto rowIt = pattern.rbegin(); rowIt != pattern.rend(); ++rowIt) {
+        for (auto valueIt = rowIt->rbegin(); valueIt != rowIt->rend(); ++valueIt) {
+          if (*valueIt == 0) index <<= 1;
+          else if (*valueIt == 1)
+            index = (index << 1) | 1;
         }
       }
       symmetries_.back().push_back(index);
@@ -313,23 +324,47 @@ class Mask::Implementation {
 
   void solve() {
     if (isSolved_) return;
-    std::cout << "Searching:";
+    printWithTimeAndMask("Searching for minimal sets...");
     while (const auto possibleMinimalSet = findSet()) {
       if (isTileableToMaxSize(possibleMinimalSet.value())) {
         auto minimalSet = possibleMinimalSet.value();
         minimizeSet(&minimalSet);
         addAndForbidSymmetricSets(minimalSet);
-        std::cout << " " << minimalSets_.size();
-        std::cout.flush();
+        logProgress();
       } else {
         incrementGridSize();
+        printWithTimeAndMask("Increased grid size to " + std::to_string(currentGridSize_) + " due to " +
+                             setDescription(possibleMinimalSet.value()) + " being tileable to size " +
+                             std::to_string(currentGridSize_ - 1) + " but not " + std::to_string(maxGridSize_) + ".");
       }
     }
-    std::cout << std::endl;
+    printWithTimeAndMask("Done. Found " + std::to_string(minimalSets_.size()) + " minimal sets.");
   }
 
-  void addAndForbidSymmetricSets(const std::vector<bool>& set) {
+  void logProgress() {
+    printWithTimeAndMask((minimalSets_.empty() ? "" : ("|" + setDescription(minimalSets_.back()) + "| ")) + "#" +
+                         std::to_string(currentGridSize_) + ", " + std::to_string(minimalSets_.size()) + ":" +
+                         countsPerSizeString() + " <- " + std::to_string(maxSetSize_));
+  }
+
+  std::string countsPerSizeString() {
+    std::ostringstream str;
+    for (int i = 0; i < maxSetSize_; ++i) {
+      str << " " << countsPerSetSize_[i];
+    }
+    return str.str();
+  }
+
+  void printWithTimeAndMask(const std::string& msg) {
+    auto t = std::time(nullptr);
+    auto tm = *std::localtime(&t);
+    std::cout << std::put_time(&tm, "%d-%m-%Y %H-%M-%S") << " [" << maskSize_.first << "-" << maskSize_.second << "-"
+              << maskID_ << "]: " << msg << std::endl;
+  }
+
+  size_t addAndForbidSymmetricSets(const std::vector<bool>& set) {
     std::unordered_set<std::vector<bool>> transformedSets;
+    auto size = setSize(set);
     for (const auto& symmetry : symmetries_) {
       std::vector<bool> transformedSet;
       for (int i = 0; i < set.size(); ++i) {
@@ -339,8 +374,19 @@ class Mask::Implementation {
     }
     for (const auto& transformedSet : transformedSets) {
       minimalSets_.push_back(transformedSet);
+      ++countsPerSetSize_[size - 1];
+      maxSetSize_ = std::max(maxSetSize_, size);
       forbidMinimalSet(transformedSet);
     }
+    return transformedSets.size();
+  }
+
+  int setSize(const std::vector<bool>& set) {
+    int result = 0;
+    for (const auto value : set) {
+      if (value) ++result;
+    }
+    return result;
   }
 
   std::optional<std::vector<bool>> findSet() {
@@ -367,10 +413,15 @@ class Mask::Implementation {
 
   std::string setDescription(const std::vector<bool>& set) {
     std::ostringstream str;
-    str << maskSize_.first << '-' << maskSize_.second << '-' << maskID_ << ':';
+    int digitIdx = 0;
+    int currentDigit = 0;
     for (bool var : set) {
-      str << (var ? '1' : '0');
+      if (digitIdx == 0) currentDigit = 0;
+      currentDigit = currentDigit * 2 + var;
+      if (digitIdx == 3) str << std::hex << currentDigit;
+      digitIdx = (digitIdx + 1) % 4;
     }
+    if (digitIdx != 0) str << std::hex << currentDigit;
     return str.str();
   }
 
@@ -383,8 +434,6 @@ class Mask::Implementation {
 
   void incrementGridSize() {
     ++currentGridSize_;
-    std::cout << " #" << currentGridSize_;
-    std::cout.flush();
 
     for (int y = 0; y < currentGridSize_ + maskSize_.first - 2; ++y) {
       solver_.new_var();
@@ -414,7 +463,10 @@ class Mask::Implementation {
   }
 };
 
-Mask::Mask(const std::pair<int, int>& size, int id) : implementation_(std::make_shared<Implementation>(size, id)) {}
+Mask::Mask(const std::pair<int, int>& size, int id, const std::string& filename)
+    : Mask(size, id, {LoggingParameters(filename)}) {}
+Mask::Mask(const std::pair<int, int>& size, int id, const LoggingParameters& loggingParameters)
+    : implementation_(std::make_shared<Implementation>(size, id, loggingParameters)) {}
 const std::vector<std::vector<bool>>& Mask::minimalSets(int maxGridSize) {
   return implementation_->minimalSets(maxGridSize);
 }
