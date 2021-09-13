@@ -343,27 +343,21 @@ FindMinimalPeriods[maxPeriod_][size_, maskID_] := Module[{
   ,
     setsAlreadyDone = <||>;
   ];
-  minimalPeriods = Table[(
-    WriteString["stdout",
-                "Tiling ",
-                currentSize,
-                "/",
-                Length[minimalSets],
-                " : ",
-                currentSet,
-                "/",
-                Length[minimalSets[[currentSize]]],
-                " :"];
-    WithCleanup[
-      MinimalPeriodCached[allPatterns, maxPeriod][
-        CanonicalPatternSet[permutations, Length[allPatterns]][minimalSets[[currentSize, currentSet]]]]
-    ,
+
+  Do[
+    Do[
+      WriteString[
+        "stdout",
+        "Tiling ", currentSize, "/", Length[minimalSets], " : ",
+        currentSet, "/", Length[minimalSets[[currentSize]]], " :"];
+      setsAlreadyDone[minimalSets[[currentSize, currentSet]]] = MinimalPeriodCached[allPatterns, maxPeriod][
+        CanonicalPatternSet[permutations, Length[allPatterns]][minimalSets[[currentSize, currentSet]]]];
       WriteString["stdout", "\n"];
-    ]
-  ), {currentSize, Length[minimalSets]}, {currentSet, Length[minimalSets[[currentSize]]]}];
-  resultAssociation = KeySort @ Join[
-    setsAlreadyDone, Association @ Thread[Catenate[minimalSets] -> Catenate[minimalPeriods]]];
-  Put[resultAssociation, "periods/" <> maskFileName[size, maskID]];
+    , {currentSet, Length[minimalSets[[currentSize]]]}];
+    resultAssociation = KeySort @ setsAlreadyDone;
+    Put[resultAssociation, "periods/" <> maskFileName[size, maskID]];
+  , {currentSize, Length[minimalSets]}];
+
   Print["Periods exceeding the limit: ", Count[Values[resultAssociation], _ ? MissingQ]];
   Print["Max: ", Max @ Cases[Values[resultAssociation], Except[_ ? MissingQ]]];
   resultAssociation
