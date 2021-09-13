@@ -321,10 +321,12 @@ FindMinimalSets[size_, maskID_, opts : OptionsPattern[]] := Block[{
 
 ParallelFindMinimalSets[maskIDs_] := Module[{},
   If[!DirectoryQ["log"], CreateDirectory["log"]];
-  fileNames = "log/minimal-sets/" <> maskFileName[##] & @@@ maskIDs;
+  fileNames = AbsoluteFileName /@ ("log/minimal-sets/" <> maskFileName[##] & @@@ maskIDs);
   If[!FileExistsQ[#], CreateFile[#]] & /@ fileNames;
   ParallelMap[
-    FindMinimalSets[#[[1]], #[[2]], LogChannel -> File["log/minimal-sets/" <> maskFileName[#[[1]], #[[2]]]]] &, maskIDs]
+    FindMinimalSets[#[[1]], #[[2]], LogChannel -> File["log/minimal-sets/" <> maskFileName[#[[1]], #[[2]]]]] &,
+    maskIDs,
+    Method -> "FinestGrained"]
 ];
 
 $masks32$4 = {
