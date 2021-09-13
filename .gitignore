@@ -41,3 +41,7 @@ TestResults/
 # Test results
 
 exit_status.txt
+
+# Logs
+
+log/
