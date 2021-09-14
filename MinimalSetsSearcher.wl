@@ -201,7 +201,7 @@ maskName[size_, maskID_] := ToString[size[[1]]] <> "-" <> ToString[size[[2]]] <>
 maskFileName[size_, maskID_] := maskName[size, maskID] <> ".m";
 
 ImportMinimalSets[size_, maskID_] :=
-  Replace["MinimalSets", Import["minimal-sets/" <> maskName[size, maskID] <> ".json", "JSON"]];
+  FromDigits[#, 16] & /@ Replace["MinimalSets", Import["minimal-sets/" <> maskName[size, maskID] <> ".json", "JSON"]];
 
 ImportCompletedSizes[size_, maskID_] := With[{imported = Import["minimal-sets/" <> maskFileName[size, maskID]]},
   If[FailureQ[imported], imported, imported["CompletedSizes"]]
