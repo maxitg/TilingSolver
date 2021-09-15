@@ -6,7 +6,7 @@
 
 std::string minimalSetsPath(const std::pair<int, int>& maskSize, int maskID) {
   std::string filename =
-      std::to_string(maskSize.first) + "-" + std::to_string(maskSize.second) + "-" + std::to_string(maskID) + ".m";
+      std::to_string(maskSize.first) + "-" + std::to_string(maskSize.second) + "-" + std::to_string(maskID) + ".json";
   return (boost::dll::program_location().parent_path().parent_path() / "minimal-sets" / filename).string();
 }
 

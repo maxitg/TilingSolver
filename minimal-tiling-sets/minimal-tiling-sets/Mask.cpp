@@ -1,6 +1,7 @@
 #include "Mask.hpp"
 
 #include <cryptominisat5/cryptominisat.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <iomanip>
@@ -11,6 +12,7 @@
 #include <thread>
 #include <unordered_set>
 #include <vector>
+#include <fstream>
 
 namespace TilingSystem {
 using PatternSet = std::vector<std::vector<std::vector<int>>>;
@@ -52,6 +54,7 @@ class Mask::Implementation {
   std::vector<int> patternVariables_;
   std::vector<std::vector<int>> cellVariables_;
   std::vector<std::vector<int>> symmetries_;
+  nlohmann::json minimalSetsJSON_;
 
  public:
   Implementation(const std::pair<int, int>& size, int id, const LoggingParameters& loggingParameters)
@@ -68,16 +71,45 @@ class Mask::Implementation {
 
  private:
   void init() {
+    isSolved_ = false;
     patternCount_ = 1 << bitCount(maskID_);
-    currentGridSize_ = 1;
+    std::ifstream file(loggingParameters_.filename);
+    if (file.is_open()) {
+      file >> minimalSetsJSON_;
+      if (minimalSetsJSON_["CompletedSizes"].size() == patternCount_ + 1) {
+        isSolved_ = true;
+        printWithTimeAndMask("Already solved.");
+      }
+    } else {
+      minimalSetsJSON_ = {
+        {"CompletedSizes", {0}},
+        {"MinimalSets", {}},
+        {"MinimalGridSize", 2},
+        {"LongFiniteTilers", {}}
+      };
+    }
+    try {
+      currentGridSize_ = minimalSetsJSON_["MinimalGridSize"];
+    } catch (const nlohmann::detail::type_error& error) {
+      currentGridSize_ = 2;
+    }
     solver_.set_num_threads(std::thread::hardware_concurrency());
     minimalSets_ = {};
     maxSetSize_ = 0;
     countsPerSetSize_ = std::vector<int>(patternCount_, 0);
-    isSolved_ = false;
+    for (const std::string minimalSetString : minimalSetsJSON_["MinimalSets"]) {
+      const auto minimalSet = fromSetDescription(minimalSetString);
+      minimalSets_.push_back(minimalSet);
+      int size = setSize(minimalSet);
+      maxSetSize_ = std::max(maxSetSize_, size);
+      ++countsPerSetSize_[size - 1];
+    }
     patternVariables_ = initPatternVariables(&solver_);
     cellVariables_ = initSpatialVariables(&solver_, currentGridSize_);
     initSpatialClauses(&solver_, std::nullopt, patternVariables_, cellVariables_);
+    for (const auto& minimalSet : minimalSets_) {
+      forbidMinimalSet(minimalSet);
+    }
     initSymmetries();
   }
 
@@ -339,6 +371,7 @@ class Mask::Implementation {
       }
     }
     printWithTimeAndMask("Done. Found " + std::to_string(minimalSets_.size()) + " minimal sets.");
+    isSolved_ = true;
   }
 
   void logProgress() {
@@ -423,6 +456,23 @@ class Mask::Implementation {
     }
     if (digitIdx != 0) str << std::hex << currentDigit;
     return str.str();
+  }
+
+  std::vector<bool> fromSetDescription(const std::string& description) {
+    std::vector<bool> result;
+    int hexDigit = 0;
+    int digitStartIndex = 0;
+    for (int i = 0; i < patternCount_; ++i) {
+      if (i % 4 == 0) {
+        std::reverse(result.begin() + digitStartIndex, result.end());
+        digitStartIndex = static_cast<int>(result.size());
+        hexDigit = std::stoi(std::string({description.at(i / 4)}), nullptr, 16);
+      }
+      result.push_back(hexDigit & 1);
+      hexDigit >>= 1;
+    }
+    std::reverse(result.begin() + digitStartIndex, result.end());
+    return result;
   }
 
   bool isTileableToMaxSize(const std::vector<bool>& set) {
