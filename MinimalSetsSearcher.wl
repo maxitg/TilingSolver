@@ -200,9 +200,13 @@ maskName[size_, maskID_] := ToString[size[[1]]] <> "-" <> ToString[size[[2]]] <>
 
 maskFileName[size_, maskID_] := maskName[size, maskID] <> ".m";
 
-ImportMinimalSets[size_, maskID_] := Import["minimal-sets/" <> maskFileName[size, maskID]]["MinimalSets"];
+ImportMinimalSets[size_, maskID_] := With[{imported = Import["minimal-sets/" <> maskFileName[size, maskID]]},
+  If[FailureQ[imported], imported, imported["MinimalSets"]]
+];
 
-ImportCompletedSizes[size_, maskID_] := Import["minimal-sets/" <> maskFileName[size, maskID]]["CompletedSizes"];
+ImportCompletedSizes[size_, maskID_] := With[{imported = Import["minimal-sets/" <> maskFileName[size, maskID]]},
+  If[FailureQ[imported], imported, imported["CompletedSizes"]]
+];
 
 ImportMinimalPeriods[size_, maskID_] := Import["periods/" <> maskFileName[size, maskID]];
 
