@@ -5,7 +5,7 @@ Check[
   otherFilename = $ScriptCommandLine[[3]];
   finalFilename = $ScriptCommandLine[[4]];
 
-  Print["Merging ", finalFilename];
+  WriteString["stdout", "Merging ", finalFilename, ": "];
 
   currentData = Import[currentFilename, "WL"];
   otherData = Import[otherFilename, "WL"];
@@ -19,7 +19,15 @@ Check[
 
   Put[mergeResult, currentFilename];
 
-  Print["+", Length[mergeResult["MinimalSets"]] - Length[currentData["MinimalSets"]], " minimal sets"];
+  WriteString["stdout",
+    "+", Length[mergeResult["MinimalSets"]] - Length[currentData["MinimalSets"]], " minimal sets, ",
+    "+", mergeResult["MinimalGridSize"] - currentData["MinimalGridSize"], " grid size",
+    If[Length[mergeResult["CompletedSizes"]] > Length[currentData["CompletedSizes"]],
+      ", and more completed sizes"
+    ,
+      ""
+    ],
+    "\n"];
 ,
   Print["Messages were generated during the merge. Exiting."];
   Exit[1];
