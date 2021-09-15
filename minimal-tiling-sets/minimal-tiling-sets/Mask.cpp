@@ -1,18 +1,18 @@
 #include "Mask.hpp"
 
 #include <cryptominisat5/cryptominisat.h>
-#include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <queue>
 #include <sstream>
 #include <thread>
 #include <unordered_set>
 #include <vector>
-#include <fstream>
 
 namespace TilingSystem {
 using PatternSet = std::vector<std::vector<std::vector<int>>>;
@@ -42,6 +42,11 @@ class Mask::Implementation {
   std::pair<int, int> maskSize_;
   int maskID_;
   LoggingParameters loggingParameters_;
+
+  std::chrono::time_point<std::chrono::steady_clock> lastProgressLogTime_ =
+      std::chrono::time_point<std::chrono::steady_clock>::min();
+  std::chrono::time_point<std::chrono::steady_clock> lastResultsSavingTime_ =
+      std::chrono::time_point<std::chrono::steady_clock>::min();
 
   int patternCount_;
   int currentGridSize_;
@@ -82,11 +87,7 @@ class Mask::Implementation {
       }
     } else {
       minimalSetsJSON_ = {
-        {"CompletedSizes", {0}},
-        {"MinimalSets", {}},
-        {"MinimalGridSize", 2},
-        {"LongFiniteTilers", {}}
-      };
+          {"CompletedSizes", {0}}, {"MinimalSets", {}}, {"MinimalGridSize", 2}, {"LongFiniteTilers", {}}};
     }
     try {
       currentGridSize_ = minimalSetsJSON_["MinimalGridSize"];
@@ -375,9 +376,11 @@ class Mask::Implementation {
   }
 
   void logProgress() {
+    if (std::chrono::steady_clock::now() < lastProgressLogTime_ + loggingParameters_.progressLoggingPeriod) return;
     printWithTimeAndMask((minimalSets_.empty() ? "" : ("|" + setDescription(minimalSets_.back()) + "| ")) + "#" +
                          std::to_string(currentGridSize_) + ", " + std::to_string(minimalSets_.size()) + ":" +
                          countsPerSizeString() + " <- " + std::to_string(maxSetSize_));
+    lastProgressLogTime_ = std::chrono::steady_clock::now();
   }
 
   std::string countsPerSizeString() {

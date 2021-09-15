@@ -12,7 +12,7 @@ class Mask {
  public:
   struct LoggingParameters {
     std::ostream* progressStream = &std::cout;
-    std::chrono::duration<float> progressLoggingPeriod = std::chrono::seconds(1);
+    std::chrono::duration<float> progressLoggingPeriod = std::chrono::seconds(0);
     std::string filename;
     std::chrono::duration<float> resultsSavingPeriod = std::chrono::minutes(1);
     LoggingParameters(const std::string& filename) : filename(filename) {}
