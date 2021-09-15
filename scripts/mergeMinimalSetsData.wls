@@ -3,8 +3,9 @@
 Check[
   currentFilename = $ScriptCommandLine[[2]];
   otherFilename = $ScriptCommandLine[[3]];
+  finalFilename = $ScriptCommandLine[[4]];
 
-  Print["Merging ", FileNameTake[currentFilename, -1]];
+  Print["Merging ", finalFilename];
 
   currentData = Import[currentFilename, "WL"];
   otherData = Import[otherFilename, "WL"];
@@ -17,6 +18,8 @@ Check[
   |>;
 
   Put[mergeResult, currentFilename];
+
+  Print["+", Length[mergeResult["MinimalSets"]] - Length[currentData["MinimalSets"]], " minimal sets"];
 ,
   Print["Messages were generated during the merge. Exiting."];
   Exit[1];
