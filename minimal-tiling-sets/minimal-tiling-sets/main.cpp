@@ -18,6 +18,6 @@ int main(int argc, const char* argv[]) {
   const auto filename = minimalSetsPath(size, maskID);
   std::cout << "Writing results to " << filename << std::endl;
   auto mask = TilingSystem::Mask(size, maskID, filename);
-  std::vector<std::vector<bool>> minimalSets = mask.minimalSets(maxGridSize);
+  mask.findMinimalSets(maxGridSize);
   return 0;
 }
