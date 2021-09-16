@@ -50,7 +50,6 @@ class Mask::Implementation {
 
   int patternCount_;
   CMSat::SATSolver solver_;
-  std::vector<int> countsPerSetSize_;
   int maxSetSize_;
   bool isSolved_ = false;
   int maxGridSize_ = -1;
@@ -93,7 +92,6 @@ class Mask::Implementation {
     }
     solver_.set_num_threads(std::thread::hardware_concurrency());
     maxSetSize_ = 0;
-    countsPerSetSize_ = std::vector<int>(patternCount_, 0);
     patternVariables_ = initPatternVariables(&solver_);
     cellVariables_ = initSpatialVariables(&solver_, minimalSetsJSON_[minimalGridSizeKey]);
     initSpatialClauses(&solver_, std::nullopt, patternVariables_, cellVariables_);
@@ -101,7 +99,6 @@ class Mask::Implementation {
       const auto minimalSet = fromSetDescription(minimalSetString);
       int size = setSize(minimalSet);
       maxSetSize_ = std::max(maxSetSize_, size);
-      ++countsPerSetSize_[size - 1];
       forbidMinimalSet(minimalSet);
     }
     initSymmetries();
@@ -384,9 +381,9 @@ class Mask::Implementation {
     printWithTimeAndMask((minimalSetsJSON_[minimalSetsKey].empty()
                               ? ""
                               : ("|" + std::string(minimalSetsJSON_[minimalSetsKey].back()) + "| ")) +
-                         "#" + std::to_string(static_cast<int>(minimalSetsJSON_[minimalGridSizeKey])) + ", " +
-                         std::to_string(minimalSetsJSON_[minimalSetsKey].size()) + ":" + countsPerSizeString() +
-                         " <- " + std::to_string(maxSetSize_));
+                         "#" + std::to_string(static_cast<int>(minimalSetsJSON_[minimalGridSizeKey])) + ", count " +
+                         std::to_string(minimalSetsJSON_[minimalSetsKey].size()) + ", max size " +
+                         std::to_string(maxSetSize_));
     lastProgressLogTime_ = std::chrono::steady_clock::now();
   }
 
@@ -405,14 +402,6 @@ class Mask::Implementation {
       printWithTimeAndMask("WARNING! Could not save results to a file: " + std::string(std::strerror(errno)));
     }
     lastResultsSavingTime_ = std::chrono::steady_clock::now();
-  }
-
-  std::string countsPerSizeString() {
-    std::ostringstream str;
-    for (int i = 0; i < maxSetSize_; ++i) {
-      str << " " << countsPerSetSize_[i];
-    }
-    return str.str();
   }
 
   void printWithTimeAndMask(const std::string& msg) {
@@ -434,7 +423,6 @@ class Mask::Implementation {
     }
     for (const auto& transformedSet : transformedSets) {
       minimalSetsJSON_[minimalSetsKey].push_back(setDescription(transformedSet));
-      ++countsPerSetSize_[size - 1];
       maxSetSize_ = std::max(maxSetSize_, size);
       forbidMinimalSet(transformedSet);
     }
