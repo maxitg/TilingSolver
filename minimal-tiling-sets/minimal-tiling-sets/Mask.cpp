@@ -364,6 +364,7 @@ class Mask::Implementation {
         minimizeSet(&minimalSet);
         addAndForbidSymmetricSets(minimalSet);
         logProgress();
+        saveResults();
       } else {
         incrementGridSize();
         printWithTimeAndMask("Increased grid size to " + std::to_string(currentGridSize_) + " due to " +
@@ -382,6 +383,8 @@ class Mask::Implementation {
                          countsPerSizeString() + " <- " + std::to_string(maxSetSize_));
     lastProgressLogTime_ = std::chrono::steady_clock::now();
   }
+
+  void saveResults() {}
 
   std::string countsPerSizeString() {
     std::ostringstream str;
