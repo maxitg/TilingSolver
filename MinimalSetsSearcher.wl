@@ -218,16 +218,17 @@ CanonicalMinimalSets[size_, maskID_] := Module[{minimalSets, allPatterns, permut
 
 (* Periodicity *)
 
-MinimalPeriod[maxPeriod_][patterns_] := Module[{minPeriod},
+MinimalPeriod[maxPeriod_, logProgress_][patterns_] := Module[{minPeriod},
   minPeriod = Max[Dimensions[First[patterns]]] + 1;
   SelectFirst[(
-      WriteString["stdout", " ", #];
+      If[logProgress, WriteString["stdout", " ", #]];
       !FailureQ[GenerateTiling[patterns, {}, #, Boundary -> "Periodic"]]
     ) &][Range[minPeriod, maxPeriod]]
 ];
 
-MinimalPeriodCached[allPatterns_, maxPeriod_][setNumber_] := MinimalPeriodCached[allPatterns, maxPeriod][setNumber] =
-  MinimalPeriod[maxPeriod][NumberToPatternSet[allPatterns][setNumber]];
+MinimalPeriodCached[allPatterns_, maxPeriod_, logProgress_][setNumber_] :=
+    MinimalPeriodCached[allPatterns, maxPeriod, logProgress][setNumber] =
+  MinimalPeriod[maxPeriod, logProgress][NumberToPatternSet[allPatterns][setNumber]];
 
 (* Reporting *)
 
@@ -371,9 +372,10 @@ ParallelFindMinimalSets32$4[idx___] := ParallelFindMinimalSets[$masks32$4[[idx]]
 
 (* Main - FindMinimalPeriods *)
 
-FindMinimalPeriods[maxPeriod_][size_, maskID_] := Module[{
+Options[FindMinimalPeriods] = {LogProgress -> True};
+FindMinimalPeriods[maxPeriod_, opts : OptionsPattern[]][size_, maskID_] := Module[{
     allPatterns, minimalSetsFlat, groupedMinimalSets, minimalSets, permutations, setsAlreadyDone, minimalPeriods,
-    resultAssociation},
+    resultAssociation, logProgress},
   allPatterns = maskToAllPatterns @ idToMask[size, maskID];
   minimalSetsFlat = ImportMinimalSets[size, maskID];
   groupedMinimalSets = GroupBy[minimalSetsFlat, Count[IntegerDigits[#, 2], 1] &];
@@ -386,21 +388,72 @@ FindMinimalPeriods[maxPeriod_][size_, maskID_] := Module[{
     setsAlreadyDone = <||>;
   ];
 
+  If[AllTrue[minimalSets, # === {} &], Return[KeySort[setsAlreadyDone]]];
+
+  logProgress = TrueQ[OptionValue[FindMinimalPeriods, {opts}, LogProgress]];
+
   Do[
     Do[
-      WriteString[
-        "stdout",
-        "Tiling ", currentSize, "/", Length[minimalSets], " : ",
-        currentSet, "/", Length[minimalSets[[currentSize]]], " :"];
-      setsAlreadyDone[minimalSets[[currentSize, currentSet]]] = MinimalPeriodCached[allPatterns, maxPeriod][
-        CanonicalPatternSet[permutations, Length[allPatterns]][minimalSets[[currentSize, currentSet]]]];
-      WriteString["stdout", "\n"];
+      If[logProgress,
+        WriteString[
+          "stdout",
+          "Tiling ", size[[1]], "-", size[[2]], "-", maskID, " : ", currentSize, "/", Length[minimalSets], " : ",
+          currentSet, "/", Length[minimalSets[[currentSize]]], " :"];
+      ];
+      setsAlreadyDone[minimalSets[[currentSize, currentSet]]] =
+        MinimalPeriodCached[allPatterns, maxPeriod, logProgress][
+          CanonicalPatternSet[permutations, Length[allPatterns]][minimalSets[[currentSize, currentSet]]]];
+      If[logProgress, WriteString["stdout", "\n"]];
     , {currentSet, Length[minimalSets[[currentSize]]]}];
     resultAssociation = KeySort @ setsAlreadyDone;
     Put[resultAssociation, "periods/" <> maskFileName[size, maskID]];
   , {currentSize, Length[minimalSets]}];
 
-  Print["Periods exceeding the limit: ", Count[Values[resultAssociation], _ ? MissingQ]];
-  Print["Max: ", Max @ Cases[Values[resultAssociation], Except[_ ? MissingQ]]];
+  If[logProgress,
+    Print["Periods exceeding the limit: ", Count[Values[resultAssociation], _ ? MissingQ]];
+    Print["Max: ", Max @ Cases[Values[resultAssociation], Except[_ ? MissingQ]]];
+  ];
   resultAssociation
+];
+
+masksWithMinimalSets[] := ({{#[[1]], #[[2]]}, #[[3]]} &) /@
+  (ToExpression /@ StringSplit[#, "-"] &) /@ FileBaseName /@ FileNames["minimal-sets/*"];
+
+$redColor = "\033[0;31m";
+$greenColor = "\033[0;32m";
+$orangeColor = "\033[0;33m";
+$yellowColor = "\033[1;33m";
+$endColor = "\033[0m";
+
+(* This hack fixes a bug in Mathematica 12.1.1: if any messages or Prints occur in a subkernel, unformatted
+     KernelObject is printed, obscuring any relevant information. It has been reported upstream. *)
+LaunchKernels; (* trigger autoload *)
+Unprotect[System`KernelObject];
+System`KernelObject /: StringForm["From `1`:", ko_KernelObject] := $orangeColor <> "From subkernel:" <> $endColor;
+CloseKernels[];
+LaunchKernels[];
+
+FindAllPeriodsRepeated[maxPeriod_] := Module[{masksAvailable, currentlyInProgress, myMask, lock},
+  SetSharedVariable[masksAvailable, currentlyInProgress];
+  masksAvailable = masksWithMinimalSets[];
+  currentlyInProgress = {};
+  ParallelEvaluate[
+    While[True,
+      CriticalSection[lock,
+        masksAvailable = DeleteCases[
+          DeleteDuplicates[Join[masksAvailable, masksWithMinimalSets[]]], Alternatives @@ currentlyInProgress];
+        myMask = First @ masksAvailable;
+        masksAvailable = Rest @ masksAvailable;
+        currentlyInProgress = Append[currentlyInProgress, myMask];
+        Print[DateString[{"Year", "-", "Month", "-", "Day", " ", "Hour", ":", "Minute", ":", "Second"}], ": perioding ",
+              StringRiffle[ToString /@ {#[[1, 1]], #[[1, 2]], #[[2]]}, "-"] & /@ currentlyInProgress];
+      ];
+      FindMinimalPeriods[141, LogProgress -> False] @@ myMask;
+      CriticalSection[lock,
+        masksAvailable = Append[masksAvailable, myMask];
+        currentlyInProgress = DeleteCases[currentlyInProgress, myMask];
+      ];
+      Pause[1];
+    ];
+  ];
 ];
