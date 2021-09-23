@@ -200,12 +200,39 @@ maskName[size_, maskID_] := ToString[size[[1]]] <> "-" <> ToString[size[[2]]] <>
 
 maskFileName[size_, maskID_] := maskName[size, maskID] <> ".m";
 
-ImportMinimalSets[size_, maskID_] :=
-  FromDigits[#, 16] & /@ Replace["MinimalSets", Import["minimal-sets/" <> maskName[size, maskID] <> ".json", "JSON"]];
-
-ImportCompletedSizes[size_, maskID_] := With[{imported = Import["minimal-sets/" <> maskFileName[size, maskID]]},
-  If[FailureQ[imported], imported, imported["CompletedSizes"]]
+ImportMinimalSetData[size_, maskID_, key_] := ModuleScope[
+  maskString = maskName[size, maskID];
+  {jsonFilename, mFilename} = ("minimal-sets/" <> maskString <> # &) /@ {".json", ".m"};
+  If[FileExistsQ[jsonFilename],
+    ImportMinimalSetsJSON[jsonFilename, key]
+  ,
+    If[FileExistsQ[mFilename],
+      ImportMinimalSetsM[mFilename, key]
+    ,
+      $Failed
+    ]
+  ]
 ];
+
+ImportMinimalSets[size_, maskID_] := ImportMinimalSetData[size, maskID, "MinimalSets"];
+
+ImportCompletedSizes[size_, maskID_] := ImportMinimalSetData[size, maskID, "CompletedSizes"];
+
+ImportLongFiniteTilers[size_, maskID_] := ImportMinimalSetData[size, maskID, "LongFiniteTilers"];
+
+ImportMinimalSetsM[filename_, "MinimalSets"] := Import[filename]["MinimalSets"];
+
+ImportMinimalSetsM[filename_, "CompletedSizes"] := Import[filename]["CompletedSizes"];
+
+ImportMinimalSetsM[filename_, "LongFiniteTilers"] := Import[filename]["LongFiniteTilers"];
+
+ImportMinimalSetsJSON[filename_, "MinimalSets"] :=
+  FromDigits[#, 16] & /@ Replace["MinimalSets", Import[filename, "JSON"]];
+
+ImportMinimalSetsJSON[filename_, "CompletedSizes"] := Replace["CompletedSizes", Import[filename, "JSON"]];
+
+ImportMinimalSetsJSON[filename_, "LongFiniteTilers"] :=
+  FromDigits[#, 16] & /@ KeySort @ KeyMap[ToExpression, Association[Association[Import[filename]]["LongFiniteTilers"]]];
 
 ImportMinimalPeriods[size_, maskID_] := Import["periods/" <> maskFileName[size, maskID]];
 
@@ -382,7 +409,7 @@ FindMinimalPeriods[maxPeriod_, opts : OptionsPattern[]][size_, maskID_] := Modul
   minimalSets = Lookup[groupedMinimalSets, #, {}] & /@ Range[Length[allPatterns]];
   permutations = GetSymmetryPermutations[allPatterns];
   If[FileExistsQ["periods/" <> maskFileName[size, maskID]],
-    setsAlreadyDone = Import["periods/" <> maskFileName[size, maskID]];
+    setsAlreadyDone = DeleteCases[Import["periods/" <> maskFileName[size, maskID]], _ ? MissingQ];
     minimalSets = Select[MissingQ[setsAlreadyDone[#]] &] /@ minimalSets;
   ,
     setsAlreadyDone = <||>;
