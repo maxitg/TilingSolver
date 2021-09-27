@@ -1,35 +1,46 @@
 (* Tiling solver *)
 
 ClearAll[$statePattern];
-$statePattern = {{(0 | 1 | Verbatim[_])...}...};
+$statePattern = {{(_Integer ? (GreaterEqualThan[0]) | Verbatim[_])...}...};
 
 ClearAll[$patternsPattern];
 $patternsPattern = {$statePattern ...};
 
 ClearAll[TilingStatePlot];
 Options[TilingStatePlot] = Options[ArrayPlot];
-TilingStatePlot[state : $statePattern, opts : OptionsPattern[]] :=
-  ArrayPlot[state, opts, Mesh -> True, PlotRangePadding -> 0, ColorRules -> {0 -> White, 1 -> Black, _ -> Gray}];
+TilingStatePlot[state : $statePattern, opts : OptionsPattern[]] := ArrayPlot[
+  state,
+  opts,
+  Mesh -> True,
+  PlotRangePadding -> 0,
+  ColorRules -> {0 -> White, 1 -> Black, n_Integer :> ColorData[97, n], _ -> Gray}];
 
 ClearAll[TilingPatternPlot];
 Options[TilingPatternPlot] = Options[TilingStatePlot];
 TilingPatternPlot[patterns : $patternsPattern, opts : OptionsPattern[]] :=
   TilingStatePlot[#, opts, ImageSize -> 50] & /@ patterns;
 
-Tile::usage = "Tile[x, y] represents a tile at x, y coordinates.";
+Tile::usage = "Tile[x, y, b] represents the bit b of a tile at x, y coordinates.";
 
-ClearAll[SingleTileLogicalExpression];
-SingleTileLogicalExpression[patterns : $patternsPattern] := Module[{variables},
-  variables = Table[Tile[i, j], {i, 1, Length @ patterns[[1]]}, {j, 1, Length @ patterns[[1, 1]]}];
-  Or @@ And @@@ (
-    Catenate /@ Map[Thread, Thread /@ (variables -> # & /@ patterns), {2}] /.
-      {(cell_ -> 1) :> cell, (cell_ -> 0) :> !cell, (cell_ -> Verbatim[_]) :> Nothing})
+ClearAll[toBinaryTiles];
+toBinaryTiles[bitCount_][x_, y_, value_] := With[{
+    digits = IntegerDigits[value, 2, bitCount]},
+  And @@ MapIndexed[If[# == 1, Identity, Not][Tile[x, y, #2[[1]]]] &, digits]
 ];
 
-displacedLogicalExpression[expr_, {dx_, dy_}] := expr /. {Tile[x_, y_] :> Tile[x + dx, y + dy]};
+ClearAll[SingleTileLogicalExpression];
+SingleTileLogicalExpression[bitCount_][patterns : $patternsPattern] := Module[{variables},
+  variables = Table[Tile[i, j], {i, 1, Length @ patterns[[1]]}, {j, 1, Length @ patterns[[1, 1]]}];
+  Or @@ And @@@ (
+    Catenate /@ Map[Thread, Thread /@ (variables -> # & /@ patterns), {2}] /. {
+      (Tile[x_, y_] -> value_Integer) :> toBinaryTiles[bitCount][x, y, value],
+      (Tile[x_, y_] -> Verbatim[_]) :> Nothing})
+];
+
+displacedLogicalExpression[expr_, {dx_, dy_}] := expr /. {Tile[x_, y_, b_] :> Tile[x + dx, y + dy, b]};
 
 positionNormalize[rule_] := Module[{allCoordinates, offset},
-  allCoordinates = Transpose[List @@@ Cases[rule, _Tile, All]];
+  allCoordinates = Transpose[Cases[rule, Tile[x_, y_, _] :> {x, y}, All]];
   offset = Min /@ allCoordinates;
   displacedLogicalExpression[rule, 1 - offset]
 ];
@@ -53,27 +64,30 @@ GenerateTiling[patterns : Except[{}, $patternsPattern],
                count_Integer : Automatic,
                OptionsPattern[]] /;
       And @@ (And @@ Thread[size > Replace[Dimensions[#], {0} -> {0, 0}]] & /@ {patterns[[1]], init}) := Module[{
-    patternSize, extendedPatternExpression, initExpression, variables, i, j, depth,
+    patternSize, bitCount, extendedPatternExpression, initExpression, variables, i, j, depth,
     boundaryExpression, solutionList, initX, initY, takeTop, takeBottom, takeLeft, takeRight},
   patternSize = Dimensions[patterns[[1]]];
+  bitCount = Max[Ceiling[Log2[Max[{Cases[patterns, _ ? NumericQ, {3}], Cases[init, _ ? NumericQ, {2}]}] + 1]], 1];
   initX = Ceiling[(size[[1]] + 1) / 2] - Floor[Dimensions[init][[1]] / 2];
   initY = Ceiling[(size[[2]] + 1) / 2] - Floor[Dimensions[init][[-1]] / 2];
-  extendedPatternExpression = singlePatternExpressionToGrid[size][SingleTileLogicalExpression[patterns]];
-  initExpression = displacedLogicalExpression[SingleTileLogicalExpression[{init}], {initX, initY}];
-  variables = Catenate @ Table[
-    Tile[i, j], {i, size[[1]] + patternSize[[1]] - 1}, {j, size[[2]] + patternSize[[2]] - 1}];
+  extendedPatternExpression = singlePatternExpressionToGrid[size][SingleTileLogicalExpression[bitCount][patterns]];
+  initExpression = displacedLogicalExpression[SingleTileLogicalExpression[bitCount][{init}], {initX, initY}];
+  variables = Catenate @ Catenate @ Table[
+    Tile[i, j, b], {i, size[[1]] + patternSize[[1]] - 1}, {j, size[[2]] + patternSize[[2]] - 1}, {b, bitCount}];
   boundaryExpression = Switch[OptionValue[Boundary],
     "Any",
       True,
     "Periodic",
-      And @@ Catenate @ Table[
-        Tile[i, depth] && Tile[i, size[[2]] + depth] || !Tile[i, depth] && !Tile[i, size[[2]] + depth],
+      And @@ Catenate @ Catenate @ Table[
+        Tile[i, depth, b] && Tile[i, size[[2]] + depth, b] || !Tile[i, depth, b] && !Tile[i, size[[2]] + depth, b],
         {i, size[[1]] + patternSize[[1]] - 1},
-        {depth, patternSize[[2]] - 1}] &&
-      And @@ Catenate @ Table[
-        Tile[depth, i] && Tile[size[[1]] + depth, i] || !Tile[depth, i] && !Tile[size[[1]] + depth, i],
+        {depth, patternSize[[2]] - 1},
+        {b, bitCount}] &&
+      And @@ Catenate @ Catenate @ Table[
+        Tile[depth, i, b] && Tile[size[[1]] + depth, i, b] || !Tile[depth, i, b] && !Tile[size[[1]] + depth, i, b],
         {i, size[[2]] + patternSize[[2]] - 1},
-        {depth, patternSize[[1]] - 1}]];
+        {depth, patternSize[[1]] - 1},
+        {b, bitCount}]];
   solutionList = SatisfiabilityInstances[
     extendedPatternExpression && initExpression && boundaryExpression,
     variables,
@@ -84,8 +98,9 @@ GenerateTiling[patterns : Except[{}, $patternsPattern],
   takeBottom = takeTop - 1 - patternSize[[1]];
   takeLeft = 1 + Quotient[patternSize[[2]] - 1, 2];
   takeRight = takeLeft - 1 - patternSize[[2]];
+
   If[count === Automatic, First, Identity][
-    Boole[Normal @ SparseArray[Thread[List @@@ positionNormalize[variables] -> #]]][[
+    Partition[FromDigits[#, 2] & /@ Boole[Partition[#, bitCount]], size[[2]] + patternSize[[2]] - 1][[
         takeTop ;; takeBottom, takeLeft ;; takeRight]] & /@
       solutionList]
 ];
@@ -445,20 +460,6 @@ FindMinimalPeriods[maxPeriod_, opts : OptionsPattern[]][size_, maskID_] := Modul
 
 masksWithMinimalSets[] := ({{#[[1]], #[[2]]}, #[[3]]} &) /@
   (ToExpression /@ StringSplit[#, "-"] &) /@ FileBaseName /@ FileNames["minimal-sets/*"];
-
-$redColor = "\033[0;31m";
-$greenColor = "\033[0;32m";
-$orangeColor = "\033[0;33m";
-$yellowColor = "\033[1;33m";
-$endColor = "\033[0m";
-
-(* This hack fixes a bug in Mathematica 12.1.1: if any messages or Prints occur in a subkernel, unformatted
-     KernelObject is printed, obscuring any relevant information. It has been reported upstream. *)
-LaunchKernels; (* trigger autoload *)
-Unprotect[System`KernelObject];
-System`KernelObject /: StringForm["From `1`:", ko_KernelObject] := $orangeColor <> "From subkernel:" <> $endColor;
-CloseKernels[];
-LaunchKernels[];
 
 FindAllPeriodsRepeated[maxPeriod_] := Module[{masksAvailable, currentlyInProgress, myMask, lock},
   SetSharedVariable[masksAvailable, currentlyInProgress];
