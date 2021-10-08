@@ -51,55 +51,62 @@ class Mask::Implementation {
   int patternCount_;
   CMSat::SATSolver solver_;
   int maxSetSize_;
-  bool isSolved_ = false;
-  int maxGridSize_ = -1;
+  int maxPeriod_;
   std::vector<int> patternVariables_;
   std::vector<std::vector<int>> cellVariables_;
   std::vector<std::vector<int>> symmetries_;
 
-  const std::string completedSizesKey = "CompletedSizes";
-  const std::string minimalSetsKey = "MinimalSets";
+  const std::string isDoneKey = "IsDone";
+  const std::string periodsKey = "Periods";
+  // These are tileable but not periodic up to specified sizes (this will usually be a single currently-processed set)
+  const std::string periodLowerBoundsKey = "PeriodLowerBounds";
   const std::string minimalGridSizeKey = "MinimalGridSize";
-  const std::string longFiniteTilersKey = "LongFiniteTilers";
+  // Maximal grid size a particular set can tile. This will only be recorded when the grid needs to be enlarged.
+  const std::string maximalGridSizesKey = "MaximalGridSizes";
   nlohmann::json minimalSetsJSON_;
 
  public:
   Implementation(const std::pair<int, int>& size, int id, const LoggingParameters& loggingParameters)
-      : maskSize_(size), maskID_(id), loggingParameters_(loggingParameters) {}
-
-  void findMinimalSets(int maxGridSize) {
-    if (maxGridSize_ != maxGridSize) {
-      maxGridSize_ = maxGridSize;
-      init();
-    }
-    solve();
+      : maskSize_(size), maskID_(id), loggingParameters_(loggingParameters) {
+    init();
   }
+
+  void findMinimalSets() { solve(); }
 
  private:
   void init() {
-    isSolved_ = false;
     patternCount_ = 1 << bitCount(maskID_);
     std::ifstream file(loggingParameters_.filename);
     if (file.is_open()) {
       file >> minimalSetsJSON_;
-      if (minimalSetsJSON_[completedSizesKey].size() == patternCount_ + 1) {
-        isSolved_ = true;
+      if (minimalSetsJSON_[isDoneKey].is_boolean() && minimalSetsJSON_[isDoneKey]) {
         printWithTimeAndMask("Already solved.");
       }
-    } else {
-      minimalSetsJSON_ = {
-          {completedSizesKey, {0}}, {minimalSetsKey, {}}, {minimalGridSizeKey, 2}, {longFiniteTilersKey, {}}};
     }
-    solver_.set_num_threads(std::thread::hardware_concurrency());
+    if (!minimalSetsJSON_.count(isDoneKey)) minimalSetsJSON_[isDoneKey] = false;
+    if (!minimalSetsJSON_.count(periodsKey)) minimalSetsJSON_[periodsKey] = std::unordered_map<std::string, int>();
+    if (!minimalSetsJSON_.count(periodLowerBoundsKey))
+      minimalSetsJSON_[periodLowerBoundsKey] = std::unordered_map<std::string, int>();
+    if (!minimalSetsJSON_.count(minimalGridSizeKey)) minimalSetsJSON_[minimalGridSizeKey] = 2;
+    if (!minimalSetsJSON_.count(maximalGridSizesKey))
+      minimalSetsJSON_[maximalGridSizesKey] = std::unordered_map<std::string, int>();
+
+    solver_.set_num_threads(1);
     maxSetSize_ = 0;
+    maxPeriod_ = 0;
     patternVariables_ = initPatternVariables(&solver_);
-    cellVariables_ = initSpatialVariables(&solver_, minimalSetsJSON_[minimalGridSizeKey]);
-    initSpatialClauses(&solver_, std::nullopt, patternVariables_, cellVariables_);
-    for (const std::string minimalSetString : minimalSetsJSON_[minimalSetsKey]) {
-      const auto minimalSet = fromSetDescription(minimalSetString);
+    cellVariables_ = initSpatialVariables(&solver_, minimalSetsJSON_[minimalGridSizeKey], GridBoundary::Finite);
+    initSpatialClauses(&solver_, std::nullopt, patternVariables_, cellVariables_, GridBoundary::Finite);
+    for (auto setAndPeriod = minimalSetsJSON_[periodsKey].begin(); setAndPeriod != minimalSetsJSON_[periodsKey].end();
+         ++setAndPeriod) {
+      const auto minimalSet = fromSetDescription(setAndPeriod.key());
       int size = setSize(minimalSet);
       maxSetSize_ = std::max(maxSetSize_, size);
+      maxPeriod_ = std::max(maxPeriod_, static_cast<int>(setAndPeriod.value()));
       forbidMinimalSet(minimalSet);
+    }
+    if (!minimalSetsJSON_[periodLowerBoundsKey].empty()) {
+      printWithTimeAndMask(std::to_string(minimalSetsJSON_[periodLowerBoundsKey].size()) + " sets have no periods.");
     }
     initSymmetries();
   }
@@ -263,11 +270,23 @@ class Mask::Implementation {
     return patternVariables;
   }
 
-  std::vector<std::vector<int>> initSpatialVariables(CMSat::SATSolver* solver, int gridSize) {
+  enum class GridBoundary { Finite, Periodic };
+
+  std::vector<std::vector<int>> initSpatialVariables(CMSat::SATSolver* solver,
+                                                     int gridSize,
+                                                     GridBoundary boundary) const {
     std::vector<std::vector<int>> cellVariables;
-    cellVariables.resize(gridSize + maskSize_.first - 1);
+    int ySize, xSize;
+    if (boundary == GridBoundary::Finite) {
+      ySize = gridSize + maskSize_.first - 1;
+      xSize = gridSize + maskSize_.second - 1;
+    } else {
+      ySize = gridSize;
+      xSize = gridSize;
+    }
+    cellVariables.resize(ySize);
     for (int i = 0; i < cellVariables.size(); ++i) {
-      cellVariables[i].resize(gridSize + maskSize_.second - 1);
+      cellVariables[i].resize(xSize);
       for (int j = 0; j < cellVariables[i].size(); ++j) {
         solver->new_var();
         cellVariables[i][j] = solver->nVars() - 1;
@@ -276,22 +295,23 @@ class Mask::Implementation {
     return cellVariables;
   }
 
-  static void printClause(const std::vector<CMSat::Lit>& clause) {
-    for (const auto lit : clause) {
-      if (!lit.sign()) std::cout << "!";
-      std::cout << lit.var() << " ";
-    }
-    std::cout << std::endl;
-  }
-
   // pattern variables are only used if set is a nullopt. Otherwise, unset tiles are skipped.
   void initSpatialClauses(CMSat::SATSolver* solver,
                           const std::optional<std::vector<bool>>& set,
                           const std::optional<std::vector<int>>& patternVariables,
-                          const std::vector<std::vector<int>>& cellVariables) const {
-    for (int y = 0; y < cellVariables.size() - (maskSize_.first - 1); ++y) {
-      for (int x = 0; x < cellVariables[y].size() - (maskSize_.second - 1); ++x) {
-        initSpatialClausesAt(solver, set, patternVariables, cellVariables, y, x);
+                          const std::vector<std::vector<int>>& cellVariables,
+                          GridBoundary boundary) const {
+    int yEnd, xEnd;
+    if (boundary == GridBoundary::Finite) {
+      yEnd = static_cast<int>(cellVariables.size()) - (maskSize_.first - 1);
+      xEnd = cellVariables.empty() ? 0 : static_cast<int>(cellVariables[0].size()) - (maskSize_.second - 1);
+    } else {
+      yEnd = static_cast<int>(cellVariables.size());
+      xEnd = cellVariables.empty() ? 0 : static_cast<int>(cellVariables[0].size());
+    }
+    for (int y = 0; y < yEnd; ++y) {
+      for (int x = 0; x < xEnd; ++x) {
+        initSpatialClausesAt(solver, set, patternVariables, cellVariables, y, x, boundary);
       }
     }
   }
@@ -301,7 +321,8 @@ class Mask::Implementation {
                             const std::optional<std::vector<int>>& patternVariables,
                             const std::vector<std::vector<int>>& cellVariables,
                             int y,
-                            int x) const {
+                            int x,
+                            GridBoundary boundary) const {
     std::vector<int> patternClauseVariables;
     for (int patternIndex = 0; patternIndex < patternCount_; ++patternIndex) {
       if (set && !set.value().at(patternIndex)) continue;
@@ -320,7 +341,15 @@ class Mask::Implementation {
       for (int maskY = 0; maskY < maskSize_.first; ++maskY) {
         for (int maskX = 0; maskX < maskSize_.second; ++maskX) {
           if ((maskID_ >> (maskY * maskSize_.second + maskX)) & 1) {
-            auto cellLit = CMSat::Lit(cellVariables[y + maskY][x + maskX], !(patternIndex & patternDigit));
+            int cellY, cellX;
+            if (boundary == GridBoundary::Periodic) {
+              cellY = (y + maskY) % cellVariables.size();
+              cellX = (x + maskX) % cellVariables[y].size();
+            } else {
+              cellY = y + maskY;
+              cellX = x + maskX;
+            }
+            CMSat::Lit cellLit = CMSat::Lit(cellVariables[cellY][cellX], !(patternIndex & patternDigit));
             longClause.push_back(~cellLit);
             solver->add_clause({~clauseLit, cellLit});
             patternDigit <<= 1;
@@ -346,44 +375,64 @@ class Mask::Implementation {
   }
 
   void solve() {
-    if (isSolved_) {
-      printWithTimeAndMask("There are a total of " + std::to_string(minimalSetsJSON_[minimalSetsKey].size()) +
-                           " minimal sets.");
-      return;
-    }
     printWithTimeAndMask("Searching for minimal sets...");
-    while (const auto possibleMinimalSet = findSet()) {
-      if (isTileableToMaxSize(possibleMinimalSet.value())) {
+
+    while (!minimalSetsJSON_[isDoneKey]) {
+      logProgress();
+      saveResults();
+      if (!minimalSetsJSON_[periodLowerBoundsKey].empty()) {
+        nlohmann::json::iterator setStringAndLowerPeriodBound = minimalSetsJSON_[periodLowerBoundsKey].begin();
+        const auto setString = setStringAndLowerPeriodBound.key();
+        const auto set = fromSetDescription(setString);
+        const auto periodToTry = static_cast<int>(setStringAndLowerPeriodBound.value()) + 1;
+        if (isTileable(set, periodToTry, GridBoundary::Finite)) {
+          if (isTileable(set, periodToTry, GridBoundary::Periodic)) {
+            addAndForbidSymmetricSets(set, periodToTry);
+            maxPeriod_ = std::max(periodToTry, maxPeriod_);
+            minimalSetsJSON_[periodLowerBoundsKey].erase(setString);
+          } else {
+            minimalSetsJSON_[periodLowerBoundsKey][setString] = periodToTry;
+          }
+        } else {
+          minimalSetsJSON_[maximalGridSizesKey][setString] = periodToTry - 1;
+          increaseGridSize(periodToTry);
+          minimalSetsJSON_[periodLowerBoundsKey].erase(setString);
+        }
+      } else if (const auto possibleMinimalSet = findSet()) {
         auto minimalSet = possibleMinimalSet.value();
         minimizeSet(&minimalSet);
-        addAndForbidSymmetricSets(minimalSet);
-        logProgress();
-        saveResults();
+        minimalSetsJSON_[periodLowerBoundsKey][setDescription(minimalSet)] = 0;
       } else {
-        minimalSetsJSON_[longFiniteTilersKey][std::to_string(static_cast<int>(minimalSetsJSON_[minimalGridSizeKey]))] =
-            setDescription(possibleMinimalSet.value());
-        incrementGridSize();
-        printWithTimeAndMask("#" + std::to_string(static_cast<int>(minimalSetsJSON_[minimalGridSizeKey])) + " due to " +
-                             setDescription(possibleMinimalSet.value()));
+        minimalSetsJSON_[isDoneKey] = true;
+        saveResults(SaveResultsPriority::Force);
+        printWithTimeAndMask("Done.");
       }
     }
-    minimalSetsJSON_[completedSizesKey] = {};
-    for (int i = 0; i <= patternCount_; ++i) {
-      minimalSetsJSON_[completedSizesKey].push_back(i);
-    }
-    saveResults(SaveResultsPriority::Force);
-    printWithTimeAndMask("Done. Found " + std::to_string(minimalSetsJSON_[minimalSetsKey].size()) + " minimal sets.");
-    isSolved_ = true;
+
+    printResults();
+  }
+
+  void printResults() const {
+    printWithTimeAndMask("There are a total of " + std::to_string(minimalSetsJSON_[periodsKey].size()) +
+                         " minimal sets.");
+    printWithTimeAndMask("Maximal period is " + std::to_string(maxPeriod_));
+    printWithTimeAndMask("Largest finite grid is " +
+                         std::to_string(static_cast<int>(minimalSetsJSON_[minimalGridSizeKey])));
   }
 
   void logProgress() {
     if (std::chrono::steady_clock::now() < lastProgressLogTime_ + loggingParameters_.progressLoggingPeriod) return;
-    printWithTimeAndMask((minimalSetsJSON_[minimalSetsKey].empty()
-                              ? ""
-                              : ("|" + std::string(minimalSetsJSON_[minimalSetsKey].back()) + "| ")) +
-                         "#" + std::to_string(static_cast<int>(minimalSetsJSON_[minimalGridSizeKey])) + ", count " +
-                         std::to_string(minimalSetsJSON_[minimalSetsKey].size()) + ", max size " +
-                         std::to_string(maxSetSize_));
+    std::string periodCount = "✓ " + std::to_string(minimalSetsJSON_[periodsKey].size());
+    std::string unknownString = "? " + std::to_string(minimalSetsJSON_[periodLowerBoundsKey].size());
+    if (!minimalSetsJSON_[periodLowerBoundsKey].empty()) {
+      nlohmann::json::iterator firstUnknown = minimalSetsJSON_[periodLowerBoundsKey].begin();
+      unknownString += " (" + firstUnknown.key() + ": " + std::to_string(static_cast<int>(firstUnknown.value())) + ")";
+    }
+    std::string maxPeriod = "<> " + std::to_string(maxPeriod_);
+    std::string minGridSize = "# " + std::to_string(static_cast<int>(minimalSetsJSON_[minimalGridSizeKey]));
+    std::string maxSetSize = "|| " + std::to_string(maxSetSize_);
+
+    printWithTimeAndMask(periodCount + " " + unknownString + " " + maxPeriod + " " + minGridSize + " " + maxSetSize);
     lastProgressLogTime_ = std::chrono::steady_clock::now();
   }
 
@@ -394,7 +443,6 @@ class Mask::Implementation {
         std::chrono::steady_clock::now() < lastResultsSavingTime_ + loggingParameters_.resultsSavingPeriod) {
       return;
     }
-    std::sort(minimalSetsJSON_[minimalSetsKey].begin(), minimalSetsJSON_[minimalSetsKey].end());
     std::ofstream file(loggingParameters_.filename);
     if (file.is_open()) {
       file << minimalSetsJSON_.dump(2);
@@ -404,14 +452,14 @@ class Mask::Implementation {
     lastResultsSavingTime_ = std::chrono::steady_clock::now();
   }
 
-  void printWithTimeAndMask(const std::string& msg) {
+  void printWithTimeAndMask(const std::string& msg) const {
     auto t = std::time(nullptr);
     auto tm = *std::localtime(&t);
     std::cout << std::put_time(&tm, "%d-%m-%Y %H-%M-%S") << " [" << maskSize_.first << "-" << maskSize_.second << "-"
               << maskID_ << "]: " << msg << std::endl;
   }
 
-  size_t addAndForbidSymmetricSets(const std::vector<bool>& set) {
+  size_t addAndForbidSymmetricSets(const std::vector<bool>& set, int period) {
     std::unordered_set<std::vector<bool>> transformedSets;
     auto size = setSize(set);
     for (const auto& symmetry : symmetries_) {
@@ -422,7 +470,7 @@ class Mask::Implementation {
       transformedSets.insert(transformedSet);
     }
     for (const auto& transformedSet : transformedSets) {
-      minimalSetsJSON_[minimalSetsKey].push_back(setDescription(transformedSet));
+      minimalSetsJSON_[periodsKey][setDescription(transformedSet)] = period;
       maxSetSize_ = std::max(maxSetSize_, size);
       forbidMinimalSet(transformedSet);
     }
@@ -490,11 +538,15 @@ class Mask::Implementation {
     return result;
   }
 
-  bool isTileableToMaxSize(const std::vector<bool>& set) {
+  bool isTileable(const std::vector<bool>& set, int size, GridBoundary boundary) const {
     CMSat::SATSolver solver;
-    solver.set_num_threads(std::thread::hardware_concurrency());
-    initSpatialClauses(&solver, set, std::nullopt, initSpatialVariables(&solver, maxGridSize_));
+    solver.set_num_threads(1);
+    initSpatialClauses(&solver, set, std::nullopt, initSpatialVariables(&solver, size, boundary), boundary);
     return solver.solve() == CMSat::l_True;
+  }
+
+  void increaseGridSize(int newSize) {
+    while (minimalSetsJSON_[minimalGridSizeKey] < newSize) incrementGridSize();
   }
 
   void incrementGridSize() {
@@ -512,18 +564,25 @@ class Mask::Implementation {
     }
 
     for (int i = 0; i < minimalGridSize - 1; ++i) {
-      initSpatialClausesAt(&solver_, std::nullopt, patternVariables_, cellVariables_, i, minimalGridSize - 1);
-      initSpatialClausesAt(&solver_, std::nullopt, patternVariables_, cellVariables_, minimalGridSize - 1, i);
+      initSpatialClausesAt(
+          &solver_, std::nullopt, patternVariables_, cellVariables_, i, minimalGridSize - 1, GridBoundary::Finite);
+      initSpatialClausesAt(
+          &solver_, std::nullopt, patternVariables_, cellVariables_, minimalGridSize - 1, i, GridBoundary::Finite);
     }
-    initSpatialClausesAt(
-        &solver_, std::nullopt, patternVariables_, cellVariables_, minimalGridSize - 1, minimalGridSize - 1);
+    initSpatialClausesAt(&solver_,
+                         std::nullopt,
+                         patternVariables_,
+                         cellVariables_,
+                         minimalGridSize - 1,
+                         minimalGridSize - 1,
+                         GridBoundary::Finite);
   }
 
   void minimizeSet(std::vector<bool>* set) {
     for (int i = 0; i < set->size(); ++i) {
       if (set->at(i)) {
         (*set)[i] = false;
-        if (!isTileableToMaxSize(*set)) (*set)[i] = true;
+        if (!isTileable(*set, minimalSetsJSON_[minimalGridSizeKey], GridBoundary::Finite)) (*set)[i] = true;
       }
     }
   }
@@ -533,5 +592,5 @@ Mask::Mask(const std::pair<int, int>& size, int id, const std::string& filename)
     : Mask(size, id, {LoggingParameters(filename)}) {}
 Mask::Mask(const std::pair<int, int>& size, int id, const LoggingParameters& loggingParameters)
     : implementation_(std::make_shared<Implementation>(size, id, loggingParameters)) {}
-void Mask::findMinimalSets(int maxGridSize) { implementation_->findMinimalSets(maxGridSize); }
+void Mask::findMinimalSets() { implementation_->findMinimalSets(); }
 }  // namespace TilingSystem

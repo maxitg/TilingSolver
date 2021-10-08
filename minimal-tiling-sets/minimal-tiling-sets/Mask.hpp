@@ -20,7 +20,7 @@ class Mask {
 
   Mask(const std::pair<int, int>& size, int id, const std::string& filename);
   Mask(const std::pair<int, int>& size, int id, const LoggingParameters& parameters);
-  void findMinimalSets(int maxGridSize);
+  void findMinimalSets();
 
  private:
   class Implementation;

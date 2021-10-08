@@ -11,13 +11,12 @@ std::string minimalSetsPath(const std::pair<int, int>& maskSize, int maskID) {
 }
 
 int main(int argc, const char* argv[]) {
-  if (argc != 5) std::cout << "Usage: minimal-tiling-sets sizeY sizeX maskID maxGridSize" << std::endl;
+  if (argc != 4) std::cout << "Usage: minimal-tiling-sets sizeY sizeX maskID" << std::endl;
   std::pair<int, int> size = std::make_pair(std::stoi(std::string(argv[1])), std::stoi(std::string(argv[2])));
   int maskID = std::stoi(std::string(argv[3]));
-  int maxGridSize = std::stoi(std::string(argv[4]));
   const auto filename = minimalSetsPath(size, maskID);
   std::cout << "Writing results to " << filename << std::endl;
   auto mask = TilingSystem::Mask(size, maskID, filename);
-  mask.findMinimalSets(maxGridSize);
+  mask.findMinimalSets();
   return 0;
 }
