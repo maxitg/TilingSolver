@@ -1,26 +1,23 @@
-#ifndef Mask_hpp
-#define Mask_hpp
+#ifndef MaskManager_hpp
+#define MaskManager_hpp
 
 #include <chrono>
 #include <iostream>
-#include <memory>
-#include <utility>
-#include <vector>
+#include <string>
 
 #include "Dropbox.hpp"
 
 namespace TilingSystem {
-class Mask {
+class MaskManager {
  public:
   struct LoggingParameters {
     std::ostream* progressStream = &std::cout;
-    std::chrono::duration<float> progressLoggingPeriod = std::chrono::seconds(0);
-    std::string filename;
+    std::chrono::duration<float> progressLoggingPeriod = std::chrono::milliseconds(1202);
     std::chrono::duration<float> resultsSavingPeriod = std::chrono::seconds(308);
   };
 
-  Mask(const std::pair<int, int>& size, int id, Dropbox& dropbox, const LoggingParameters& parameters);
-  void findMinimalSets();
+  MaskManager(Dropbox& dropbox, const LoggingParameters& parameters);
+  void run(int threadCount);
 
  private:
   class Implementation;
@@ -28,4 +25,4 @@ class Mask {
 };
 }  // namespace TilingSystem
 
-#endif /* Mask_hpp */
+#endif /* MaskManager_hpp */

@@ -1,35 +1,44 @@
 #include <iostream>
+#include <thread>
 #include <vector>
 
-#include "DropboxInit.hpp"
-#include "Mask.hpp"
-
-std::string minimalSetsPath(const std::pair<int, int>& maskSize, int maskID, const std::string& dataDirectory) {
-  std::string filename =
-      std::to_string(maskSize.first) + "-" + std::to_string(maskSize.second) + "-" + std::to_string(maskID) + ".json";
-  return dataDirectory + "/" + filename;
-}
+#include "Dropbox.hpp"
+#include "MaskManager.hpp"
 
 int main(int argc, const char* argv[]) {
-  if (argc != 4) std::cout << "Usage: minimal-tiling-sets sizeY sizeX maskID" << std::endl;
-  std::pair<int, int> size = std::make_pair(std::stoi(std::string(argv[1])), std::stoi(std::string(argv[2])));
-  int maskID = std::stoi(std::string(argv[3]));
+  if (argc > 2) {
+    std::cerr << "Usage: minimal-tiling-sets threadCount" << std::endl;
+    return 2;
+  }
+  int threadCount;
+  if (argc == 1) {
+    threadCount = std::thread::hardware_concurrency();
+  } else {
+    try {
+      threadCount = std::stoi(argv[1]);
+    } catch (...) {
+      std::cerr << "threadCount must be an integer." << std::endl;
+      return 2;
+    }
+    if (threadCount <= 0) {
+      std::cerr << "threadCount must be positive." << std::endl;
+      return 2;
+    }
+  }
 
   const std::string dropboxAppKey = "tmlt7oeepzda36p";
   const std::string configFilename = std::string(std::getenv("HOME")) + "/.minimal-tiling-sets";
 
-  TilingSystem::Mask::LoggingParameters parameters;
+  TilingSystem::MaskManager::LoggingParameters parameters;
+
+  // TODO: update status.json on termination
+
   try {
-    TilingSystem::DropboxInit dropboxInit(dropboxAppKey, configFilename);
-    parameters.dropboxAppKey = dropboxAppKey;
-    parameters.dropboxFilename = minimalSetsPath(size, maskID, dropboxInit.dataDirectory());
-    parameters.dropboxRefreshToken = dropboxInit.refreshToken();
-  } catch (TilingSystem::DropboxInit::Error& error) {
+    TilingSystem::Dropbox dropbox(dropboxAppKey, configFilename);
+    auto manager = TilingSystem::MaskManager(dropbox, parameters);
+    manager.run(threadCount);
+  } catch (TilingSystem::Dropbox::Error& error) {
     return 1;
   }
-
-  std::cout << "Writing results to " << parameters.dropboxFilename << std::endl;
-  auto mask = TilingSystem::Mask(size, maskID, parameters);
-  mask.findMinimalSets();
   return 0;
 }
