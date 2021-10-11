@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		6903B63227136512005C5FAB /* DropboxInit.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 6903B63027136512005C5FAB /* DropboxInit.cpp */; };
 		692E76E326E55DA90091A536 /* main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 692E76E226E55DA90091A536 /* main.cpp */; };
 		692E76EE26E5614D0091A536 /* Mask.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 692E76EC26E5614D0091A536 /* Mask.cpp */; };
 /* End PBXBuildFile section */
@@ -24,6 +25,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		6903B62F271340AD005C5FAB /* httplib.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = httplib.h; sourceTree = "<group>"; };
+		6903B63027136512005C5FAB /* DropboxInit.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DropboxInit.cpp; sourceTree = "<group>"; };
+		6903B63127136512005C5FAB /* DropboxInit.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DropboxInit.hpp; sourceTree = "<group>"; };
 		692E76DF26E55DA90091A536 /* minimal-tiling-sets */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "minimal-tiling-sets"; sourceTree = BUILT_PRODUCTS_DIR; };
 		692E76E226E55DA90091A536 /* main.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = main.cpp; sourceTree = "<group>"; };
 		692E76EC26E5614D0091A536 /* Mask.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Mask.cpp; sourceTree = "<group>"; };
@@ -60,9 +64,12 @@
 		692E76E126E55DA90091A536 /* minimal-tiling-sets */ = {
 			isa = PBXGroup;
 			children = (
+				6903B62F271340AD005C5FAB /* httplib.h */,
 				692E76E226E55DA90091A536 /* main.cpp */,
 				692E76EC26E5614D0091A536 /* Mask.cpp */,
 				692E76ED26E5614D0091A536 /* Mask.hpp */,
+				6903B63127136512005C5FAB /* DropboxInit.hpp */,
+				6903B63027136512005C5FAB /* DropboxInit.cpp */,
 			);
 			path = "minimal-tiling-sets";
 			sourceTree = "<group>";
@@ -125,6 +132,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				692E76E326E55DA90091A536 /* main.cpp in Sources */,
+				6903B63227136512005C5FAB /* DropboxInit.cpp in Sources */,
 				692E76EE26E5614D0091A536 /* Mask.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -253,10 +261,20 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
+				HEADER_SEARCH_PATHS = (
+					/usr/local/include,
+					/usr/local/opt/openssl/include,
+				);
+				LIBRARY_SEARCH_PATHS = (
+					/usr/local/lib,
+					/usr/local/opt/openssl/lib,
+				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
 				OTHER_LDFLAGS = (
 					"-lcryptominisat5",
 					"-lboost_filesystem",
+					"-lcrypto",
+					"-lssl",
 				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -266,10 +284,20 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
+				HEADER_SEARCH_PATHS = (
+					/usr/local/include,
+					/usr/local/opt/openssl/include,
+				);
+				LIBRARY_SEARCH_PATHS = (
+					/usr/local/lib,
+					/usr/local/opt/openssl/lib,
+				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
 				OTHER_LDFLAGS = (
 					"-lcryptominisat5",
 					"-lboost_filesystem",
+					"-lcrypto",
+					"-lssl",
 				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};

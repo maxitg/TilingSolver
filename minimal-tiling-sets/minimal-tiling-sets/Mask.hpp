@@ -13,12 +13,13 @@ class Mask {
   struct LoggingParameters {
     std::ostream* progressStream = &std::cout;
     std::chrono::duration<float> progressLoggingPeriod = std::chrono::seconds(0);
-    std::string filename;
-    std::chrono::duration<float> resultsSavingPeriod = std::chrono::minutes(1);
-    LoggingParameters(const std::string& filename) : filename(filename) {}
+    std::string dropboxAppKey;
+    std::string dropboxFilename;
+    std::string dropboxAuthorizationCode;
+    std::string dropboxCodeVerifier;
+    std::chrono::duration<float> resultsSavingPeriod = std::chrono::minutes(5);
   };
 
-  Mask(const std::pair<int, int>& size, int id, const std::string& filename);
   Mask(const std::pair<int, int>& size, int id, const LoggingParameters& parameters);
   void findMinimalSets();
 

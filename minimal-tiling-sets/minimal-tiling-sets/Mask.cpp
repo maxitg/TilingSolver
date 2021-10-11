@@ -1,11 +1,13 @@
 #include "Mask.hpp"
 
+#define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <cryptominisat5/cryptominisat.h>
 
 #include <algorithm>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <queue>
@@ -13,6 +15,8 @@
 #include <thread>
 #include <unordered_set>
 #include <vector>
+
+#include "httplib.h"
 
 namespace TilingSystem {
 using PatternSet = std::vector<std::vector<std::vector<int>>>;
@@ -50,65 +54,276 @@ class Mask::Implementation {
 
   int patternCount_;
   CMSat::SATSolver solver_;
-  int maxSetSize_;
-  int maxPeriod_;
+  int maxSetSize_ = 0;
+  int maxPeriod_ = 0;
   std::vector<int> patternVariables_;
   std::vector<std::vector<int>> cellVariables_;
   std::vector<std::vector<int>> symmetries_;
 
-  const std::string isDoneKey = "IsDone";
-  const std::string periodsKey = "Periods";
-  // These are tileable but not periodic up to specified sizes (this will usually be a single currently-processed set)
-  const std::string periodLowerBoundsKey = "PeriodLowerBounds";
-  const std::string minimalGridSizeKey = "MinimalGridSize";
-  // Maximal grid size a particular set can tile. This will only be recorded when the grid needs to be enlarged.
-  const std::string maximalGridSizesKey = "MaximalGridSizes";
-  nlohmann::json minimalSetsJSON_;
+  bool isDone_ = false;
+  std::map<std::vector<bool>, int> periods_;
+  std::map<std::vector<bool>, int> periodLowerBounds_;
+  int minimalGridSize_ = 2;
+  std::map<std::vector<bool>, int> maximalGridSizes_;
+  std::string dropboxDataDirectory_;
+
+  const int maxLockAttempts_ = 5;
+  const std::chrono::seconds sleepBetweenLockTries_ = std::chrono::seconds(1);
+  std::string accessToken_;
+  std::chrono::time_point<std::chrono::steady_clock> accessTokenExpiration_ =
+      std::chrono::time_point<std::chrono::steady_clock>::min();
 
  public:
   Implementation(const std::pair<int, int>& size, int id, const LoggingParameters& loggingParameters)
-      : maskSize_(size), maskID_(id), loggingParameters_(loggingParameters) {
-    init();
+      : maskSize_(size), maskID_(id), loggingParameters_(loggingParameters), patternCount_(1 << bitCount(maskID_)) {
+    solver_.set_num_threads(1);
+    syncWithDropbox();
+    patternVariables_ = initPatternVariables(&solver_);
+    cellVariables_ = initSpatialVariables(&solver_, minimalGridSize_, GridBoundary::Finite);
+    initSpatialClauses(&solver_, std::nullopt, patternVariables_, cellVariables_, GridBoundary::Finite);
+    for (const auto& [minimalSet, period] : periods_) {
+      int size = setSize(minimalSet);
+      maxSetSize_ = std::max(maxSetSize_, size);
+      maxPeriod_ = std::max(maxPeriod_, static_cast<int>(period));
+      forbidMinimalSet(minimalSet);
+    }
+    if (!periodLowerBounds_.empty()) {
+      printWithTimeAndMask(std::to_string(periodLowerBounds_.size()) + " sets have no periods.");
+    }
+    initSymmetries();
   }
 
   void findMinimalSets() { solve(); }
 
  private:
-  void init() {
-    patternCount_ = 1 << bitCount(maskID_);
-    std::ifstream file(loggingParameters_.filename);
-    if (file.is_open()) {
-      file >> minimalSetsJSON_;
-      if (minimalSetsJSON_[isDoneKey].is_boolean() && minimalSetsJSON_[isDoneKey]) {
-        printWithTimeAndMask("Already solved.");
-      }
-    }
-    if (!minimalSetsJSON_.count(isDoneKey)) minimalSetsJSON_[isDoneKey] = false;
-    if (!minimalSetsJSON_.count(periodsKey)) minimalSetsJSON_[periodsKey] = std::unordered_map<std::string, int>();
-    if (!minimalSetsJSON_.count(periodLowerBoundsKey))
-      minimalSetsJSON_[periodLowerBoundsKey] = std::unordered_map<std::string, int>();
-    if (!minimalSetsJSON_.count(minimalGridSizeKey)) minimalSetsJSON_[minimalGridSizeKey] = 2;
-    if (!minimalSetsJSON_.count(maximalGridSizesKey))
-      minimalSetsJSON_[maximalGridSizesKey] = std::unordered_map<std::string, int>();
+  void syncWithDropbox() {
+    // it should not give up until success. Otherwise, data may be lost.
 
-    solver_.set_num_threads(1);
-    maxSetSize_ = 0;
-    maxPeriod_ = 0;
-    patternVariables_ = initPatternVariables(&solver_);
-    cellVariables_ = initSpatialVariables(&solver_, minimalSetsJSON_[minimalGridSizeKey], GridBoundary::Finite);
-    initSpatialClauses(&solver_, std::nullopt, patternVariables_, cellVariables_, GridBoundary::Finite);
-    for (auto setAndPeriod = minimalSetsJSON_[periodsKey].begin(); setAndPeriod != minimalSetsJSON_[periodsKey].end();
-         ++setAndPeriod) {
-      const auto minimalSet = fromSetDescription(setAndPeriod.key());
-      int size = setSize(minimalSet);
-      maxSetSize_ = std::max(maxSetSize_, size);
-      maxPeriod_ = std::max(maxPeriod_, static_cast<int>(setAndPeriod.value()));
-      forbidMinimalSet(minimalSet);
+    if (!lockDropboxFile()) {
+      printSynchronizationError("Failed to lock ");
+      return;
     }
-    if (!minimalSetsJSON_[periodLowerBoundsKey].empty()) {
-      printWithTimeAndMask(std::to_string(minimalSetsJSON_[periodLowerBoundsKey].size()) + " sets have no periods.");
+    auto json = jsonFromDropbox();
+    if (json && mergeData(&json.value())) {
+      writeToDropbox(json.value());
     }
-    initSymmetries();
+    unlockDropboxFile();
+
+    // std::ofstream file(loggingParameters_.filename);
+    // if (file.is_open()) {
+    //   file << minimalSetsJSON_.dump(2);
+    // } else {
+    //   printWithTimeAndMask("WARNING! Could not save results to a file: " + std::string(std::strerror(errno)));
+    // }
+  }
+
+  bool lockDropboxFile() {
+    int remainingAttempts = maxLockAttempts_;
+    while (remainingAttempts && !tryLockingOnce()) {
+      std::this_thread::sleep_for(sleepBetweenLockTries_);
+      --remainingAttempts;
+    }
+    return remainingAttempts > 0;
+  }
+
+  bool tryLockingOnce() {
+    std::string accessToken = getAccessToken();
+    if (accessToken.empty()) return false;
+    auto result = httplib::Client("https://content.dropboxapi.com")
+                      .Post("/2/files/upload",
+                            {{"Authorization", "Bearer" + accessToken},
+                             {"Dropbox-API-Arg",
+                              nlohmann::json({{"path", loggingParameters_.dropboxFilename + ".lock"},
+                                              {"mode", "add"},
+                                              {"autorename", false},
+                                              {"mute", true},
+                                              {"strict_conflict", true}})}},
+                            "application/octet-stream",
+                            "");
+    return false;
+  }
+
+  void unlockDropboxFile() {
+    // TODO: implement
+  }
+
+  std::optional<nlohmann::json> jsonFromDropbox() {
+    // TODO: implement
+    return nlohmann::json();
+  }
+
+  void writeToDropbox(const nlohmann::json& json) {
+    // TODO: implement
+  }
+
+  std::string getAccessToken() {
+    if (std::chrono::steady_clock::now() < accessTokenExpiration_) return accessToken_;
+    auto result = httplib::Client("https://api.dropboxapi.com")
+                      .Post("/oauth2/token",
+                            httplib::MultipartFormDataItems{{"code", loggingParameters_.dropboxAuthorizationCode},
+                                                            {"grant_type", "authorization_code"},
+                                                            {"code_verifier", loggingParameters_.dropboxCodeVerifier},
+                                                            {"client_id", loggingParameters_.dropboxAppKey}});
+    if (result->status != 200) {
+      printWithTimeAndMask("Failed to get an access token from Dropbox. Skipping synchronization: " + result->body);
+      return "";
+    } else {
+      nlohmann::json resultJSON(result->body);
+      accessToken_ = resultJSON["access_token"];
+      accessTokenExpiration_ =
+          std::chrono::steady_clock::now() + std::chrono::seconds(std::stoi(std::string(resultJSON["expires_in"])));
+      return accessToken_;
+    }
+  }
+
+  bool mergeData(nlohmann::json* data) {
+    const std::string versionKey = "Version";
+    const std::string isDoneKey = "IsDone";
+    const std::string periodsKey = "Periods";
+    // These are tileable but not periodic up to specified sizes (this will usually be a single currently-processed set)
+    const std::string periodLowerBoundsKey = "PeriodLowerBounds";
+    const std::string minimalGridSizeKey = "MinimalGridSize";
+    // Maximal grid size a particular set can tile. This will only be recorded when the grid needs to be enlarged.
+    const std::string maximalGridSizesKey = "MaximalGridSizes";
+
+    if (!data->count(versionKey) || (*data)[versionKey] != 3) {
+      printSynchronizationError("Cannot recognize the format of");
+      return false;
+    }
+
+    if (data->count(isDoneKey) && (*data)[isDoneKey].is_boolean()) {
+      isDone_ = isDone_ || (*data)[isDoneKey];
+    } else if (data->count(isDoneKey)) {
+      printSynchronizationError(isDoneKey + " key should be a boolean in");
+      return false;
+    }
+    (*data)[isDoneKey] = isDone_;
+
+    if (!syncSetMap(*data,
+                    periodsKey,
+                    &periods_,
+                    [this](const std::string& setDescription, int jsonValue, int localValue, int* result) {
+                      printSynchronizationError("Local period for " + setDescription + " is different from the one in");
+                      return false;
+                    })) {
+      return false;
+    }
+    (*data)[periodsKey] = periods_;
+
+    if (!syncSetMap(*data,
+                    periodLowerBoundsKey,
+                    &periodLowerBounds_,
+                    [this](const std::string& setDescription, int jsonValue, int localValue, int* result) {
+                      *result = std::max(jsonValue, localValue);
+                      return true;
+                    })) {
+      return false;
+    }
+    (*data)[periodLowerBoundsKey] = periodLowerBounds_;
+
+    if (data->count(minimalGridSizeKey) && (*data)[minimalGridSizeKey].is_number_integer() &&
+        (*data)[minimalGridSizeKey] > 0) {
+      minimalGridSize_ = std::max(minimalGridSize_, static_cast<int>((*data)[minimalGridSizeKey]));
+    } else if (data->count(minimalGridSizeKey)) {
+      printSynchronizationError(minimalGridSizeKey + " key should be a positive integer in");
+      return false;
+    }
+    (*data)[minimalGridSizeKey] = minimalGridSize_;
+
+    if (!syncSetMap(*data,
+                    maximalGridSizesKey,
+                    &maximalGridSizes_,
+                    [this](const std::string& setDescription, int jsonValue, int localValue, int* result) {
+                      printSynchronizationError("Maximal grid size for " + setDescription +
+                                                " is different from the one in");
+                      return false;
+                    })) {
+      return false;
+    }
+    (*data)[maximalGridSizesKey] = maximalGridSizes_;
+
+    return true;
+  }
+
+  bool syncSetMap(const nlohmann::json& json,
+                  const std::string& jsonKey,
+                  std::map<std::vector<bool>, int>* localData,
+                  std::function<bool(const std::string& setDescription, int jsonValue, int localValue, int* result)>
+                      resolveConflict) {
+    if (json.count(jsonKey) && json[jsonKey].is_object()) {
+      for (auto it = json[jsonKey].begin(); it != json[jsonKey].end(); ++it) {
+        std::vector<bool> set;
+        try {
+          set = fromSetDescription(it.key());
+        } catch (...) {
+          return false;
+        }
+        if (!it.value().is_number_integer() || it.value() <= 0) {
+          printSynchronizationError("Period of " + it.key() + " is not a positive integer in");
+          return false;
+        }
+
+        if (localData->count(set) && localData->at(set) != it.value()) {
+          int result;
+          if (!resolveConflict(it.key(), it.value(), localData->at(set), &result)) {
+            return false;
+          }
+          (*localData)[set] = result;
+        }
+        if (!localData->count(set)) {
+          (*localData)[set] = it.value();
+        }
+      }
+    } else if (json.count(jsonKey)) {
+      printSynchronizationError("Key " + jsonKey + " should be an object in");
+      return false;
+    }
+    return true;
+  }
+
+  void printSynchronizationError(const std::string& message) const {
+    printWithTimeAndMask("WARNING: " + message + " " + loggingParameters_.dropboxFilename +
+                         ". Skipping synchronization.");
+  }
+
+  std::string setDescription(const std::vector<bool>& set) {
+    std::ostringstream str;
+    int digitIdx = 0;
+    int currentDigit = 0;
+    for (bool var : set) {
+      if (digitIdx == 0) currentDigit = 0;
+      currentDigit = currentDigit * 2 + var;
+      if (digitIdx == 3) str << std::hex << currentDigit;
+      digitIdx = (digitIdx + 1) % 4;
+    }
+    if (digitIdx != 0) str << std::hex << currentDigit;
+    return str.str();
+  }
+
+  std::vector<bool> fromSetDescription(const std::string& description) const {
+    std::vector<bool> result;
+    int hexDigit = 0;
+    int digitStartIndex = 0;
+    if (description.length() != (patternCount_ + 3) / 4) {
+      printSynchronizationError("Invalid length of set description " + description + " in");
+      throw false;
+    }
+    for (int i = 0; i < patternCount_; ++i) {
+      if (i % 4 == 0) {
+        std::reverse(result.begin() + digitStartIndex, result.end());
+        digitStartIndex = static_cast<int>(result.size());
+        char digit = description.at(i / 4);
+        if (!((digit >= '0' && digit <= '9') || (digit >= 'a' && digit <= 'f'))) {
+          printSynchronizationError("Invalid digit in set description " + description + " in");
+          throw false;
+        }
+        hexDigit = std::stoi(std::string({digit}), nullptr, 16);
+      }
+      result.push_back(hexDigit & 1);
+      hexDigit >>= 1;
+    }
+    std::reverse(result.begin() + digitStartIndex, result.end());
+    return result;
   }
 
   void initSymmetries() {
@@ -377,33 +592,31 @@ class Mask::Implementation {
   void solve() {
     printWithTimeAndMask("Searching for minimal sets...");
 
-    while (!minimalSetsJSON_[isDoneKey]) {
+    while (!isDone_) {
       logProgress();
       saveResults();
-      if (!minimalSetsJSON_[periodLowerBoundsKey].empty()) {
-        nlohmann::json::iterator setStringAndLowerPeriodBound = minimalSetsJSON_[periodLowerBoundsKey].begin();
-        const auto setString = setStringAndLowerPeriodBound.key();
-        const auto set = fromSetDescription(setString);
-        const auto periodToTry = static_cast<int>(setStringAndLowerPeriodBound.value()) + 1;
+      if (!periodLowerBounds_.empty()) {
+        const auto& [set, lowerPeriodBound] = *periodLowerBounds_.begin();
+        const auto periodToTry = lowerPeriodBound + 1;
         if (isTileable(set, periodToTry, GridBoundary::Finite)) {
           if (isTileable(set, periodToTry, GridBoundary::Periodic)) {
             addAndForbidSymmetricSets(set, periodToTry);
             maxPeriod_ = std::max(periodToTry, maxPeriod_);
-            minimalSetsJSON_[periodLowerBoundsKey].erase(setString);
+            periodLowerBounds_.erase(set);
           } else {
-            minimalSetsJSON_[periodLowerBoundsKey][setString] = periodToTry;
+            periodLowerBounds_[set] = periodToTry;
           }
         } else {
-          minimalSetsJSON_[maximalGridSizesKey][setString] = periodToTry - 1;
+          maximalGridSizes_[set] = periodToTry - 1;
           increaseGridSize(periodToTry);
-          minimalSetsJSON_[periodLowerBoundsKey].erase(setString);
+          periodLowerBounds_.erase(set);
         }
       } else if (const auto possibleMinimalSet = findSet()) {
         auto minimalSet = possibleMinimalSet.value();
         minimizeSet(&minimalSet);
-        minimalSetsJSON_[periodLowerBoundsKey][setDescription(minimalSet)] = 0;
+        periodLowerBounds_[minimalSet] = 0;
       } else {
-        minimalSetsJSON_[isDoneKey] = true;
+        isDone_ = true;
         saveResults(SaveResultsPriority::Force);
         printWithTimeAndMask("Done.");
       }
@@ -413,23 +626,21 @@ class Mask::Implementation {
   }
 
   void printResults() const {
-    printWithTimeAndMask("There are a total of " + std::to_string(minimalSetsJSON_[periodsKey].size()) +
-                         " minimal sets.");
+    printWithTimeAndMask("There are a total of " + std::to_string(periods_.size()) + " minimal sets.");
     printWithTimeAndMask("Maximal period is " + std::to_string(maxPeriod_));
-    printWithTimeAndMask("Largest finite grid is " +
-                         std::to_string(static_cast<int>(minimalSetsJSON_[minimalGridSizeKey])));
+    printWithTimeAndMask("Largest finite grid is " + std::to_string(minimalGridSize_));
   }
 
   void logProgress() {
     if (std::chrono::steady_clock::now() < lastProgressLogTime_ + loggingParameters_.progressLoggingPeriod) return;
-    std::string periodCount = "✓ " + std::to_string(minimalSetsJSON_[periodsKey].size());
-    std::string unknownString = "? " + std::to_string(minimalSetsJSON_[periodLowerBoundsKey].size());
-    if (!minimalSetsJSON_[periodLowerBoundsKey].empty()) {
-      nlohmann::json::iterator firstUnknown = minimalSetsJSON_[periodLowerBoundsKey].begin();
-      unknownString += " (" + firstUnknown.key() + ": " + std::to_string(static_cast<int>(firstUnknown.value())) + ")";
+    std::string periodCount = "✓ " + std::to_string(periods_.size());
+    std::string unknownString = "? " + std::to_string(periodLowerBounds_.size());
+    if (!periodLowerBounds_.empty()) {
+      const auto& [set, periodLowerBound] = *periodLowerBounds_.begin();
+      unknownString += " (" + setDescription(set) + ": " + std::to_string(periodLowerBound) + ")";
     }
     std::string maxPeriod = "<> " + std::to_string(maxPeriod_);
-    std::string minGridSize = "# " + std::to_string(static_cast<int>(minimalSetsJSON_[minimalGridSizeKey]));
+    std::string minGridSize = "# " + std::to_string(minimalGridSize_);
     std::string maxSetSize = "|| " + std::to_string(maxSetSize_);
 
     printWithTimeAndMask(periodCount + " " + unknownString + " " + maxPeriod + " " + minGridSize + " " + maxSetSize);
@@ -443,20 +654,15 @@ class Mask::Implementation {
         std::chrono::steady_clock::now() < lastResultsSavingTime_ + loggingParameters_.resultsSavingPeriod) {
       return;
     }
-    std::ofstream file(loggingParameters_.filename);
-    if (file.is_open()) {
-      file << minimalSetsJSON_.dump(2);
-    } else {
-      printWithTimeAndMask("WARNING! Could not save results to a file: " + std::string(std::strerror(errno)));
-    }
+    syncWithDropbox();
     lastResultsSavingTime_ = std::chrono::steady_clock::now();
   }
 
   void printWithTimeAndMask(const std::string& msg) const {
     auto t = std::time(nullptr);
     auto tm = *std::localtime(&t);
-    std::cout << std::put_time(&tm, "%d-%m-%Y %H-%M-%S") << " [" << maskSize_.first << "-" << maskSize_.second << "-"
-              << maskID_ << "]: " << msg << std::endl;
+    *loggingParameters_.progressStream << std::put_time(&tm, "%d-%m-%Y %H-%M-%S") << " [" << maskSize_.first << "-"
+                                       << maskSize_.second << "-" << maskID_ << "]: " << msg << std::endl;
   }
 
   size_t addAndForbidSymmetricSets(const std::vector<bool>& set, int period) {
@@ -470,7 +676,7 @@ class Mask::Implementation {
       transformedSets.insert(transformedSet);
     }
     for (const auto& transformedSet : transformedSets) {
-      minimalSetsJSON_[periodsKey][setDescription(transformedSet)] = period;
+      periods_[transformedSet] = period;
       maxSetSize_ = std::max(maxSetSize_, size);
       forbidMinimalSet(transformedSet);
     }
@@ -507,37 +713,6 @@ class Mask::Implementation {
     solver_.add_clause(clause);
   }
 
-  std::string setDescription(const std::vector<bool>& set) {
-    std::ostringstream str;
-    int digitIdx = 0;
-    int currentDigit = 0;
-    for (bool var : set) {
-      if (digitIdx == 0) currentDigit = 0;
-      currentDigit = currentDigit * 2 + var;
-      if (digitIdx == 3) str << std::hex << currentDigit;
-      digitIdx = (digitIdx + 1) % 4;
-    }
-    if (digitIdx != 0) str << std::hex << currentDigit;
-    return str.str();
-  }
-
-  std::vector<bool> fromSetDescription(const std::string& description) {
-    std::vector<bool> result;
-    int hexDigit = 0;
-    int digitStartIndex = 0;
-    for (int i = 0; i < patternCount_; ++i) {
-      if (i % 4 == 0) {
-        std::reverse(result.begin() + digitStartIndex, result.end());
-        digitStartIndex = static_cast<int>(result.size());
-        hexDigit = std::stoi(std::string({description.at(i / 4)}), nullptr, 16);
-      }
-      result.push_back(hexDigit & 1);
-      hexDigit >>= 1;
-    }
-    std::reverse(result.begin() + digitStartIndex, result.end());
-    return result;
-  }
-
   bool isTileable(const std::vector<bool>& set, int size, GridBoundary boundary) const {
     CMSat::SATSolver solver;
     solver.set_num_threads(1);
@@ -546,35 +721,34 @@ class Mask::Implementation {
   }
 
   void increaseGridSize(int newSize) {
-    while (minimalSetsJSON_[minimalGridSizeKey] < newSize) incrementGridSize();
+    while (minimalGridSize_ < newSize) incrementGridSize();
   }
 
   void incrementGridSize() {
-    minimalSetsJSON_[minimalGridSizeKey] = static_cast<int>(minimalSetsJSON_[minimalGridSizeKey]) + 1;
-    int minimalGridSize = static_cast<int>(minimalSetsJSON_[minimalGridSizeKey]);
+    ++minimalGridSize_;
 
-    for (int y = 0; y < minimalGridSize + maskSize_.first - 2; ++y) {
+    for (int y = 0; y < minimalGridSize_ + maskSize_.first - 2; ++y) {
       solver_.new_var();
       cellVariables_[y].push_back(solver_.nVars() - 1);
     }
     cellVariables_.push_back({});
-    for (int x = 0; x < minimalGridSize + maskSize_.second - 1; ++x) {
+    for (int x = 0; x < minimalGridSize_ + maskSize_.second - 1; ++x) {
       solver_.new_var();
       cellVariables_.back().push_back(solver_.nVars() - 1);
     }
 
-    for (int i = 0; i < minimalGridSize - 1; ++i) {
+    for (int i = 0; i < minimalGridSize_ - 1; ++i) {
       initSpatialClausesAt(
-          &solver_, std::nullopt, patternVariables_, cellVariables_, i, minimalGridSize - 1, GridBoundary::Finite);
+          &solver_, std::nullopt, patternVariables_, cellVariables_, i, minimalGridSize_ - 1, GridBoundary::Finite);
       initSpatialClausesAt(
-          &solver_, std::nullopt, patternVariables_, cellVariables_, minimalGridSize - 1, i, GridBoundary::Finite);
+          &solver_, std::nullopt, patternVariables_, cellVariables_, minimalGridSize_ - 1, i, GridBoundary::Finite);
     }
     initSpatialClausesAt(&solver_,
                          std::nullopt,
                          patternVariables_,
                          cellVariables_,
-                         minimalGridSize - 1,
-                         minimalGridSize - 1,
+                         minimalGridSize_ - 1,
+                         minimalGridSize_ - 1,
                          GridBoundary::Finite);
   }
 
@@ -582,14 +756,12 @@ class Mask::Implementation {
     for (int i = 0; i < set->size(); ++i) {
       if (set->at(i)) {
         (*set)[i] = false;
-        if (!isTileable(*set, minimalSetsJSON_[minimalGridSizeKey], GridBoundary::Finite)) (*set)[i] = true;
+        if (!isTileable(*set, minimalGridSize_, GridBoundary::Finite)) (*set)[i] = true;
       }
     }
   }
 };
 
-Mask::Mask(const std::pair<int, int>& size, int id, const std::string& filename)
-    : Mask(size, id, {LoggingParameters(filename)}) {}
 Mask::Mask(const std::pair<int, int>& size, int id, const LoggingParameters& loggingParameters)
     : implementation_(std::make_shared<Implementation>(size, id, loggingParameters)) {}
 void Mask::findMinimalSets() { implementation_->findMinimalSets(); }
