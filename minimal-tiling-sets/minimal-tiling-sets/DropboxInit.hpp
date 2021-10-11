@@ -7,9 +7,10 @@
 namespace TilingSystem {
 class DropboxInit {
  public:
+  enum class Error { OK, NoDataDirectory, RandomGenerationFailed, FailedToGetAccessToken };
+
   DropboxInit(const std::string& appKey, const std::string& configFilename);
-  const std::string& codeVerifier();
-  const std::string& authorizationCode();
+  const std::string& refreshToken();
   const std::string& dataDirectory();
 
  private:

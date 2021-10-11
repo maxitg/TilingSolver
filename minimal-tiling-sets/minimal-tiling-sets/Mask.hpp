@@ -15,8 +15,7 @@ class Mask {
     std::chrono::duration<float> progressLoggingPeriod = std::chrono::seconds(0);
     std::string dropboxAppKey;
     std::string dropboxFilename;
-    std::string dropboxAuthorizationCode;
-    std::string dropboxCodeVerifier;
+    std::string dropboxRefreshToken;
     std::chrono::duration<float> resultsSavingPeriod = std::chrono::minutes(5);
   };
 

@@ -17,13 +17,16 @@ int main(int argc, const char* argv[]) {
 
   const std::string dropboxAppKey = "tmlt7oeepzda36p";
   const std::string configFilename = std::string(std::getenv("HOME")) + "/.minimal-tiling-sets";
-  TilingSystem::DropboxInit dropboxInit(dropboxAppKey, configFilename);
 
   TilingSystem::Mask::LoggingParameters parameters;
-  parameters.dropboxAppKey = dropboxAppKey;
-  parameters.dropboxFilename = minimalSetsPath(size, maskID, dropboxInit.dataDirectory());
-  parameters.dropboxAuthorizationCode = dropboxInit.authorizationCode();
-  parameters.dropboxCodeVerifier = dropboxInit.codeVerifier();
+  try {
+    TilingSystem::DropboxInit dropboxInit(dropboxAppKey, configFilename);
+    parameters.dropboxAppKey = dropboxAppKey;
+    parameters.dropboxFilename = minimalSetsPath(size, maskID, dropboxInit.dataDirectory());
+    parameters.dropboxRefreshToken = dropboxInit.refreshToken();
+  } catch (TilingSystem::DropboxInit::Error& error) {
+    return 1;
+  }
 
   std::cout << "Writing results to " << parameters.dropboxFilename << std::endl;
   auto mask = TilingSystem::Mask(size, maskID, parameters);

@@ -67,8 +67,12 @@ class Mask::Implementation {
   std::map<std::vector<bool>, int> maximalGridSizes_;
   std::string dropboxDataDirectory_;
 
-  const int maxLockAttempts_ = 5;
+  const int expectedDataVersion = 3;
   const std::chrono::seconds sleepBetweenLockTries_ = std::chrono::seconds(1);
+  const std::chrono::seconds sleepBetweenFileDownloads_ = std::chrono::seconds(1);
+  const std::chrono::seconds sleepBetweenMergeConflicts_ = std::chrono::minutes(1);
+  const std::chrono::seconds sleepBetweenFileUploads_ = std::chrono::seconds(1);
+  const std::chrono::seconds sleepBetweenUnlockTries_ = std::chrono::seconds(1);
   std::string accessToken_;
   std::chrono::time_point<std::chrono::steady_clock> accessTokenExpiration_ =
       std::chrono::time_point<std::chrono::steady_clock>::min();
@@ -77,7 +81,7 @@ class Mask::Implementation {
   Implementation(const std::pair<int, int>& size, int id, const LoggingParameters& loggingParameters)
       : maskSize_(size), maskID_(id), loggingParameters_(loggingParameters), patternCount_(1 << bitCount(maskID_)) {
     solver_.set_num_threads(1);
-    syncWithDropbox();
+    syncWithDropbox(SaveResultsPriority::Force);
     patternVariables_ = initPatternVariables(&solver_);
     cellVariables_ = initSpatialVariables(&solver_, minimalGridSize_, GridBoundary::Finite);
     initSpatialClauses(&solver_, std::nullopt, patternVariables_, cellVariables_, GridBoundary::Finite);
@@ -96,82 +100,154 @@ class Mask::Implementation {
   void findMinimalSets() { solve(); }
 
  private:
-  void syncWithDropbox() {
-    // it should not give up until success. Otherwise, data may be lost.
+  enum class SaveResultsPriority { Normal, Force };
 
-    if (!lockDropboxFile()) {
-      printSynchronizationError("Failed to lock ");
+  void syncWithDropbox(const SaveResultsPriority& priority) {
+    if (priority != SaveResultsPriority::Force &&
+        std::chrono::steady_clock::now() < lastResultsSavingTime_ + loggingParameters_.resultsSavingPeriod) {
       return;
     }
-    auto json = jsonFromDropbox();
-    if (json && mergeData(&json.value())) {
-      writeToDropbox(json.value());
-    }
-    unlockDropboxFile();
+    printWithTimeAndMask("Syncing with Dropbox...");
 
-    // std::ofstream file(loggingParameters_.filename);
-    // if (file.is_open()) {
-    //   file << minimalSetsJSON_.dump(2);
-    // } else {
-    //   printWithTimeAndMask("WARNING! Could not save results to a file: " + std::string(std::strerror(errno)));
-    // }
+    bool isMergeSuccessful = false;
+    // All operations must succeed. Otherwise, data may be lost.
+    while (!lockDropboxFile()) {
+      std::this_thread::sleep_for(sleepBetweenLockTries_);
+      printWithTimeAndMask("Retrying lock...");
+    }
+    std::optional<nlohmann::json> json;
+    while (!isMergeSuccessful) {
+      while (!(json = jsonFromDropbox())) {
+        std::this_thread::sleep_for(sleepBetweenFileDownloads_);
+        printWithTimeAndMask("Retrying download...");
+      }
+      if (!mergeData(&json.value())) {
+        printWithTimeAndMask(
+            "Waiting " +
+            std::to_string(std::chrono::duration_cast<std::chrono::seconds>(sleepBetweenMergeConflicts_).count()) +
+            " seconds for the user to fix the conflict.");
+        std::this_thread::sleep_for(sleepBetweenMergeConflicts_);
+      } else {
+        isMergeSuccessful = true;
+      }
+    }
+    while (!writeToDropbox(json.value())) {
+      std::this_thread::sleep_for(sleepBetweenFileUploads_);
+      printWithTimeAndMask("Retrying upload...");
+    }
+    while (!unlockDropboxFile()) {
+      std::this_thread::sleep_for(sleepBetweenUnlockTries_);
+      printWithTimeAndMask("Retrying unlock...");
+    }
+
+    lastResultsSavingTime_ = std::chrono::steady_clock::now();
+    printWithTimeAndMask("Done.");
   }
 
   bool lockDropboxFile() {
-    int remainingAttempts = maxLockAttempts_;
-    while (remainingAttempts && !tryLockingOnce()) {
-      std::this_thread::sleep_for(sleepBetweenLockTries_);
-      --remainingAttempts;
-    }
-    return remainingAttempts > 0;
-  }
-
-  bool tryLockingOnce() {
     std::string accessToken = getAccessToken();
     if (accessToken.empty()) return false;
     auto result = httplib::Client("https://content.dropboxapi.com")
                       .Post("/2/files/upload",
-                            {{"Authorization", "Bearer" + accessToken},
+                            {{"Authorization", "Bearer " + accessToken},
                              {"Dropbox-API-Arg",
                               nlohmann::json({{"path", loggingParameters_.dropboxFilename + ".lock"},
                                               {"mode", "add"},
                                               {"autorename", false},
                                               {"mute", true},
-                                              {"strict_conflict", true}})}},
-                            "application/octet-stream",
-                            "");
-    return false;
+                                              {"strict_conflict", true}})
+                                  .dump()}},
+                            "",
+                            "text/plain; charset=dropbox-cors-hack");
+    if (result->status != 200) {
+      printWithTimeAndMask("Failed to lock the data file.");
+      printWithTimeAndMask(result->body);
+      return false;
+    } else {
+      return true;
+    }
   }
 
-  void unlockDropboxFile() {
-    // TODO: implement
+  bool unlockDropboxFile() {
+    std::string accessToken = getAccessToken();
+    if (accessToken.empty()) return false;
+    auto result = httplib::Client("https://api.dropboxapi.com")
+                      .Post("/2/files/delete_v2",
+                            {{"Authorization", "Bearer " + accessToken}},
+                            nlohmann::json({{"path", loggingParameters_.dropboxFilename + ".lock"}}).dump(),
+                            "application/json");
+    if (result->status != 200) {
+      printWithTimeAndMask("Failed to unlock the data file.");
+      printWithTimeAndMask(result->body);
+      return false;
+    } else {
+      return true;
+    }
   }
 
   std::optional<nlohmann::json> jsonFromDropbox() {
-    // TODO: implement
-    return nlohmann::json();
+    std::string accessToken = getAccessToken();
+    if (accessToken.empty()) return false;
+    auto result =
+        httplib::Client("https://content.dropboxapi.com")
+            .Post("/2/files/download",
+                  {{"Authorization", "Bearer " + accessToken},
+                   {"Dropbox-API-Arg", nlohmann::json({{"path", loggingParameters_.dropboxFilename}}).dump()}},
+                  "",
+                  "text/plain");
+    if (result->status != 200) {
+      auto json = nlohmann::json::parse(result->body);
+      if (json.is_object() && json.count("error") && json["error"].count("path") &&
+          json["error"]["path"].count(".tag") && json["error"]["path"][".tag"].is_string() &&
+          json["error"]["path"][".tag"] == "not_found") {
+        printWithTimeAndMask("Creating a new data file on Dropbox.");
+        return nlohmann::json({{"Version", expectedDataVersion}});
+      } else {
+        printWithTimeAndMask("Failed to download existing data from Dropbox.");
+        printWithTimeAndMask(result->body);
+        return std::nullopt;
+      }
+    } else {
+      return nlohmann::json::parse(result->body);
+    }
   }
 
-  void writeToDropbox(const nlohmann::json& json) {
-    // TODO: implement
+  bool writeToDropbox(const nlohmann::json& json) {
+    std::string accessToken = getAccessToken();
+    if (accessToken.empty()) return false;
+    auto result =
+        httplib::Client("https://content.dropboxapi.com")
+            .Post("/2/files/upload",
+                  {{"Authorization", "Bearer " + accessToken},
+                   {"Dropbox-API-Arg",
+                    nlohmann::json(
+                        {{"path", loggingParameters_.dropboxFilename}, {"mode", "overwrite"}, {"autorename", false}})
+                        .dump()}},
+                  json.dump(2),
+                  "text/plain; charset=dropbox-cors-hack");
+    if (result->status != 200) {
+      printWithTimeAndMask("Failed to upload data to Dropbox.");
+      printWithTimeAndMask(result->body);
+      return false;
+    } else {
+      return true;
+    }
   }
 
   std::string getAccessToken() {
     if (std::chrono::steady_clock::now() < accessTokenExpiration_) return accessToken_;
     auto result = httplib::Client("https://api.dropboxapi.com")
                       .Post("/oauth2/token",
-                            httplib::MultipartFormDataItems{{"code", loggingParameters_.dropboxAuthorizationCode},
-                                                            {"grant_type", "authorization_code"},
-                                                            {"code_verifier", loggingParameters_.dropboxCodeVerifier},
+                            httplib::MultipartFormDataItems{{"grant_type", "refresh_token"},
+                                                            {"refresh_token", loggingParameters_.dropboxRefreshToken},
                                                             {"client_id", loggingParameters_.dropboxAppKey}});
     if (result->status != 200) {
       printWithTimeAndMask("Failed to get an access token from Dropbox. Skipping synchronization: " + result->body);
       return "";
     } else {
-      nlohmann::json resultJSON(result->body);
+      nlohmann::json resultJSON = nlohmann::json::parse(result->body);
       accessToken_ = resultJSON["access_token"];
-      accessTokenExpiration_ =
-          std::chrono::steady_clock::now() + std::chrono::seconds(std::stoi(std::string(resultJSON["expires_in"])));
+      accessTokenExpiration_ = std::chrono::steady_clock::now() + std::chrono::seconds(resultJSON["expires_in"]);
       return accessToken_;
     }
   }
@@ -186,8 +262,9 @@ class Mask::Implementation {
     // Maximal grid size a particular set can tile. This will only be recorded when the grid needs to be enlarged.
     const std::string maximalGridSizesKey = "MaximalGridSizes";
 
-    if (!data->count(versionKey) || (*data)[versionKey] != 3) {
-      printSynchronizationError("Cannot recognize the format of");
+    if (!data->count(versionKey) || (*data)[versionKey] != expectedDataVersion) {
+      printSynchronizationError("Dropbox data is not of the expected version " + std::to_string(expectedDataVersion) +
+                                ".");
       return false;
     }
 
@@ -199,27 +276,33 @@ class Mask::Implementation {
     }
     (*data)[isDoneKey] = isDone_;
 
-    if (!syncSetMap(*data,
-                    periodsKey,
-                    &periods_,
-                    [this](const std::string& setDescription, int jsonValue, int localValue, int* result) {
-                      printSynchronizationError("Local period for " + setDescription + " is different from the one in");
-                      return false;
-                    })) {
+    if (!syncSetMap(
+            *data,
+            periodsKey,
+            &periods_,
+            "Period",
+            [](const std::vector<bool>& set) { return true; },
+            [this](const std::string& setDescription, int jsonValue, int localValue, int* result) {
+              printSynchronizationError("Local period for " + setDescription + " is different from the one in");
+              return false;
+            })) {
       return false;
     }
-    (*data)[periodsKey] = periods_;
+    (*data)[periodsKey] = jsonFromMap(periods_);
 
-    if (!syncSetMap(*data,
-                    periodLowerBoundsKey,
-                    &periodLowerBounds_,
-                    [this](const std::string& setDescription, int jsonValue, int localValue, int* result) {
-                      *result = std::max(jsonValue, localValue);
-                      return true;
-                    })) {
+    if (!syncSetMap(
+            *data,
+            periodLowerBoundsKey,
+            &periodLowerBounds_,
+            "Period lower bound",
+            [this](const std::vector<bool>& set) { return !periods_.count(set); },
+            [this](const std::string& setDescription, int jsonValue, int localValue, int* result) {
+              *result = std::max(jsonValue, localValue);
+              return true;
+            })) {
       return false;
     }
-    (*data)[periodLowerBoundsKey] = periodLowerBounds_;
+    (*data)[periodLowerBoundsKey] = jsonFromMap(periodLowerBounds_);
 
     if (data->count(minimalGridSizeKey) && (*data)[minimalGridSizeKey].is_number_integer() &&
         (*data)[minimalGridSizeKey] > 0) {
@@ -230,26 +313,39 @@ class Mask::Implementation {
     }
     (*data)[minimalGridSizeKey] = minimalGridSize_;
 
-    if (!syncSetMap(*data,
-                    maximalGridSizesKey,
-                    &maximalGridSizes_,
-                    [this](const std::string& setDescription, int jsonValue, int localValue, int* result) {
-                      printSynchronizationError("Maximal grid size for " + setDescription +
-                                                " is different from the one in");
-                      return false;
-                    })) {
+    if (!syncSetMap(
+            *data,
+            maximalGridSizesKey,
+            &maximalGridSizes_,
+            "Maximal grid size",
+            [](const std::vector<bool>& set) { return true; },
+            [this](const std::string& setDescription, int jsonValue, int localValue, int* result) {
+              printSynchronizationError("Maximal grid size for " + setDescription + " is different from the one in");
+              return false;
+            })) {
       return false;
     }
-    (*data)[maximalGridSizesKey] = maximalGridSizes_;
+    (*data)[maximalGridSizesKey] = jsonFromMap(maximalGridSizes_);
 
     return true;
   }
 
-  bool syncSetMap(const nlohmann::json& json,
-                  const std::string& jsonKey,
-                  std::map<std::vector<bool>, int>* localData,
-                  std::function<bool(const std::string& setDescription, int jsonValue, int localValue, int* result)>
-                      resolveConflict) {
+  nlohmann::json jsonFromMap(const std::map<std::vector<bool>, int>& map) {
+    nlohmann::json result = nlohmann::json::object();
+    for (const auto& [set, value] : map) {
+      result[setDescription(set)] = value;
+    }
+    return result;
+  }
+
+  bool syncSetMap(
+      const nlohmann::json& json,
+      const std::string& jsonKey,
+      std::map<std::vector<bool>, int>* localData,
+      const std::string& dataName,
+      const std::function<bool(const std::vector<bool>& set)>& shouldAddNewSet,
+      const std::function<bool(const std::string& setDescription, int jsonValue, int localValue, int* result)>&
+          resolveConflict) {
     if (json.count(jsonKey) && json[jsonKey].is_object()) {
       for (auto it = json[jsonKey].begin(); it != json[jsonKey].end(); ++it) {
         std::vector<bool> set;
@@ -258,8 +354,8 @@ class Mask::Implementation {
         } catch (...) {
           return false;
         }
-        if (!it.value().is_number_integer() || it.value() <= 0) {
-          printSynchronizationError("Period of " + it.key() + " is not a positive integer in");
+        if (!it.value().is_number_integer() || it.value() < 0) {
+          printSynchronizationError(dataName + " of " + it.key() + " is not a non-negative integer in");
           return false;
         }
 
@@ -270,7 +366,7 @@ class Mask::Implementation {
           }
           (*localData)[set] = result;
         }
-        if (!localData->count(set)) {
+        if (!localData->count(set) && shouldAddNewSet(set)) {
           (*localData)[set] = it.value();
         }
       }
@@ -282,8 +378,7 @@ class Mask::Implementation {
   }
 
   void printSynchronizationError(const std::string& message) const {
-    printWithTimeAndMask("WARNING: " + message + " " + loggingParameters_.dropboxFilename +
-                         ". Skipping synchronization.");
+    printWithTimeAndMask("WARNING: " + message + " " + loggingParameters_.dropboxFilename + ".");
   }
 
   std::string setDescription(const std::vector<bool>& set) {
@@ -590,11 +685,15 @@ class Mask::Implementation {
   }
 
   void solve() {
-    printWithTimeAndMask("Searching for minimal sets...");
+    if (isDone_) {
+      printWithTimeAndMask("Already done.");
+    } else {
+      printWithTimeAndMask("Searching for minimal sets...");
+    }
 
     while (!isDone_) {
       logProgress();
-      saveResults();
+      syncWithDropbox(SaveResultsPriority::Normal);
       if (!periodLowerBounds_.empty()) {
         const auto& [set, lowerPeriodBound] = *periodLowerBounds_.begin();
         const auto periodToTry = lowerPeriodBound + 1;
@@ -617,7 +716,7 @@ class Mask::Implementation {
         periodLowerBounds_[minimalSet] = 0;
       } else {
         isDone_ = true;
-        saveResults(SaveResultsPriority::Force);
+        syncWithDropbox(SaveResultsPriority::Force);
         printWithTimeAndMask("Done.");
       }
     }
@@ -645,17 +744,6 @@ class Mask::Implementation {
 
     printWithTimeAndMask(periodCount + " " + unknownString + " " + maxPeriod + " " + minGridSize + " " + maxSetSize);
     lastProgressLogTime_ = std::chrono::steady_clock::now();
-  }
-
-  enum class SaveResultsPriority { Normal, Force };
-
-  void saveResults(const SaveResultsPriority& priority = SaveResultsPriority::Normal) {
-    if (priority != SaveResultsPriority::Force &&
-        std::chrono::steady_clock::now() < lastResultsSavingTime_ + loggingParameters_.resultsSavingPeriod) {
-      return;
-    }
-    syncWithDropbox();
-    lastResultsSavingTime_ = std::chrono::steady_clock::now();
   }
 
   void printWithTimeAndMask(const std::string& msg) const {
