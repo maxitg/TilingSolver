@@ -18,12 +18,15 @@ class MaskManager::Implementation {
   const std::chrono::milliseconds sleepBetweenUnlockTries_ = std::chrono::milliseconds(1202);
   const std::chrono::milliseconds sleepBetweenUploadTries_ = std::chrono::milliseconds(1202);
 
+  const std::string versionKey = "Version";
   const std::string idleCPUsKey = "IdleCPUs";
   const std::string masksDoneKey = "MasksDone";
   const std::string masksInProgressKey = "MasksInProgress";
 
-  const nlohmann::json defaultStatus = {
-      {idleCPUsKey, 0}, {masksDoneKey, nlohmann::json::array()}, {masksInProgressKey, nlohmann::json::array()}};
+  const nlohmann::json defaultStatus = {{versionKey, expectedStatusVersion_},
+                                        {idleCPUsKey, 0},
+                                        {masksDoneKey, nlohmann::json::array()},
+                                        {masksInProgressKey, nlohmann::json::array()}};
 
   const std::function<void(const std::string& msg)> cerrPrint = [](const std::string& msg) { std::cerr << msg; };
 
@@ -99,17 +102,20 @@ class MaskManager::Implementation {
     if (!dropbox_.lockFile("status.json", cerrPrint)) return;
 
     auto status = dropbox_.downloadJSON("status.json", defaultStatus, cerrPrint);
-    if (status) {
+    if (isValidStatus(status)) {
       recordDoneTasks(&status.value());
       startJobsIfNeeded(tasks.value(), &status.value());
       updateIdleThreads(&status.value());
       sortMasks(&status.value());
-      // TODO: add version to status.
       // TODO: figure out what to do with progress monitoring.
       // TODO: hide lock files.
       while (!dropbox_.uploadJSON("status.json", status.value(), cerrPrint)) {
         std::this_thread::sleep_for(sleepBetweenUploadTries_);
       };
+    } else {
+      std::cerr << "Cannot get status.json of expected version " << expectedStatusVersion_ << ". Terminating now..."
+                << std::endl;
+      requestTermination();
     }
 
     while (!dropbox_.unlockFile("status.json", cerrPrint)) {
@@ -125,7 +131,7 @@ class MaskManager::Implementation {
 
     if (!dropbox_.lockFile("status.json", cerrPrint)) return;
     auto status = dropbox_.downloadJSON("status.json", defaultStatus, cerrPrint);
-    if (status) {
+    if (isValidStatus(status)) {
       availableThreads_ = 0;
       updateIdleThreads(&status.value());
       removeOurMasks(&status.value());
@@ -140,6 +146,11 @@ class MaskManager::Implementation {
 
     terminated_ = true;
     std::cout << "status.json termination update done." << std::endl;
+  }
+
+  bool isValidStatus(const std::optional<nlohmann::json>& status) {
+    return status && status->count(versionKey) && status->at(versionKey).is_number_integer() &&
+           status->at(versionKey) == expectedStatusVersion_;
   }
 
   void removeOurMasks(nlohmann::json* status) {
