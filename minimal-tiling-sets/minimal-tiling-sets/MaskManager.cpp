@@ -184,8 +184,7 @@ class MaskManager::Implementation {
       masksInProgress.insert(std::string(task));
     }
     for (const auto& task : tasks) {
-      if (!availableThreads_ || masksDone.count(task) || masksInProgress.count(task))
-        continue;
+      if (!availableThreads_ || masksDone.count(task) || masksInProgress.count(task)) continue;
       --availableThreads_;
       (*status)[masksInProgressKey].push_back(task);
       std::optional<MaskSpec> maskSpec;

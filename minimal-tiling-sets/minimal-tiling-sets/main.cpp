@@ -1,7 +1,8 @@
+#include <signal.h>
+
 #include <iostream>
 #include <thread>
 #include <vector>
-#include <signal.h>
 
 #include "Dropbox.hpp"
 #include "MaskManager.hpp"
@@ -9,7 +10,7 @@
 namespace {
 std::function<void(int)> signalHandler;
 void signalHandlerFunc(int signal) { signalHandler(signal); }
-} // namespace
+}  // namespace
 
 int main(int argc, const char* argv[]) {
   if (argc > 2) {
@@ -46,7 +47,7 @@ int main(int argc, const char* argv[]) {
     const std::chrono::milliseconds sleepBetweenExitTries = std::chrono::milliseconds(75);
     signalHandler = [&manager, &terminatorThread, &sleepBetweenExitTries](int signal) {
       manager.requestTermination();
-      terminatorThread = std::make_shared<std::thread>([&manager, &sleepBetweenExitTries](){
+      terminatorThread = std::make_shared<std::thread>([&manager, &sleepBetweenExitTries]() {
         while (true) {
           std::this_thread::sleep_for(sleepBetweenExitTries);
           if (manager.canBeSafelyTerminated()) {

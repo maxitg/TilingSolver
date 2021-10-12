@@ -15,8 +15,6 @@
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include "httplib.h"
 
-// TODO: do rate limiting on Dropbox
-
 namespace TilingSystem {
 class Dropbox::Implementation {
  private:
@@ -36,6 +34,12 @@ class Dropbox::Implementation {
   std::chrono::time_point<std::chrono::steady_clock> accessTokenExpiration_ =
       std::chrono::time_point<std::chrono::steady_clock>::min();
 
+  std::mutex backoffMutex_;
+  std::chrono::time_point<std::chrono::steady_clock> minAllowedRequestTime_ =
+      std::chrono::time_point<std::chrono::steady_clock>::min();
+  bool exponentialBackoff_ = false;
+  std::chrono::seconds exponentialBackoffValue_ = std::chrono::seconds(1);
+
  public:
   Implementation(const std::string& appKey, const std::string& configFilename)
       : appKey_(appKey), configFilename_(configFilename) {
@@ -49,99 +53,151 @@ class Dropbox::Implementation {
   }
 
   bool lockFile(const std::string& filename, const std::function<void(const std::string&)>& logError) {
-    auto accessToken = getAccessToken(logError);
-    if (!accessToken) return false;
-    auto result = httplib::Client("https://content.dropboxapi.com")
-                      .Post("/2/files/upload",
-                            {{"Authorization", "Bearer " + accessToken.value()},
-                             {"Dropbox-API-Arg",
-                              nlohmann::json({{"path", dataDirectory_ + "/" + filename + ".lock"},
-                                              {"mode", "add"},
-                                              {"autorename", false},
-                                              {"mute", true},
-                                              {"strict_conflict", true}})
-                                  .dump()}},
-                            "",
-                            "text/plain; charset=dropbox-cors-hack");
-    if (result->status != 200) {
-      logError("Failed to lock the data file.");
-      logError(result->body);
-      return false;
-    } else {
-      return true;
-    }
+    return isSuccessfulPostRequest({"https://content.dropboxapi.com",
+                                    "/2/files/upload",
+                                    {{"Dropbox-API-Arg",
+                                      nlohmann::json({{"path", dataDirectory_ + "/" + filename + ".lock"},
+                                                      {"mode", "add"},
+                                                      {"autorename", false},
+                                                      {"mute", true},
+                                                      {"strict_conflict", true}})
+                                          .dump()}},
+                                    "",
+                                    "text/plain; charset=dropbox-cors-hack"},
+                                   "Failed to lock the data file.",
+                                   logError);
   }
 
   bool unlockFile(const std::string& filename, const std::function<void(const std::string&)>& logError) {
-    auto accessToken = getAccessToken(logError);
-    if (!accessToken) return false;
-    auto result = httplib::Client("https://api.dropboxapi.com")
-                      .Post("/2/files/delete_v2",
-                            {{"Authorization", "Bearer " + accessToken.value()}},
-                            nlohmann::json({{"path", dataDirectory_ + "/" + filename + ".lock"}}).dump(),
-                            "application/json");
-    if (result->status != 200) {
-      logError("Failed to unlock the data file.");
-      logError(result->body);
-      return false;
-    } else {
-      return true;
-    }
+    return isSuccessfulPostRequest({"https://api.dropboxapi.com",
+                                    "/2/files/delete_v2",
+                                    {},
+                                    nlohmann::json({{"path", dataDirectory_ + "/" + filename + ".lock"}}).dump(),
+                                    "application/json"},
+                                   "Failed to unlock the data file.",
+                                   logError);
   }
 
   std::optional<nlohmann::json> downloadJSON(const std::string& filename,
                                              const nlohmann::json& defaultContents,
                                              const std::function<void(const std::string&)>& logError) {
-    auto accessToken = getAccessToken(logError);
-    if (!accessToken) return false;
-    auto result = httplib::Client("https://content.dropboxapi.com")
-                      .Post("/2/files/download",
-                            {{"Authorization", "Bearer " + accessToken.value()},
-                             {"Dropbox-API-Arg", nlohmann::json({{"path", dataDirectory_ + "/" + filename}}).dump()}},
-                            "",
-                            "text/plain");
-    if (result->status != 200) {
-      auto json = nlohmann::json::parse(result->body);
+    auto response =
+        postRequest({"https://content.dropboxapi.com",
+                     "/2/files/download",
+                     {{"Dropbox-API-Arg", nlohmann::json({{"path", dataDirectory_ + "/" + filename}}).dump()}},
+                     "",
+                     "text/plain"},
+                    logError);
+
+    if (response->first != 200) {
+      auto json = nlohmann::json::parse(response->second);
       if (json.is_object() && json.count("error") && json["error"].count("path") &&
           json["error"]["path"].count(".tag") && json["error"]["path"][".tag"].is_string() &&
           json["error"]["path"][".tag"] == "not_found") {
         return defaultContents;
       } else {
         logError("Failed to download existing data from Dropbox.");
-        logError(result->body);
+        logError(response->second);
         return std::nullopt;
       }
     } else {
-      return nlohmann::json::parse(result->body);
+      return nlohmann::json::parse(response->second);
     }
   }
 
   bool uploadJSON(const std::string& filename,
                   const nlohmann::json& json,
                   const std::function<void(const std::string&)>& logError) {
-    auto accessToken = getAccessToken(logError);
-    if (!accessToken) return false;
-    auto result =
-        httplib::Client("https://content.dropboxapi.com")
-            .Post("/2/files/upload",
-                  {{"Authorization", "Bearer " + accessToken.value()},
-                   {"Dropbox-API-Arg",
-                    nlohmann::json(
-                        {{"path", dataDirectory_ + "/" + filename}, {"mode", "overwrite"}, {"autorename", false}})
-                        .dump()}},
-                  json.dump(2),
-                  "text/plain; charset=dropbox-cors-hack");
-    if (result->status != 200) {
-      logError("Failed to upload data to Dropbox.");
-      logError(result->body);
+    return isSuccessfulPostRequest(
+        {"https://content.dropboxapi.com",
+         "/2/files/upload",
+         {{"Dropbox-API-Arg",
+           nlohmann::json({{"path", dataDirectory_ + "/" + filename}, {"mode", "overwrite"}, {"autorename", false}})
+               .dump()}},
+         json.dump(2),
+         "text/plain; charset=dropbox-cors-hack"},
+        "Failed to upload data to Dropbox.",
+        logError);
+  }
+
+ private:
+  struct PostRequestData {
+    std::string domain;
+    std::string path;
+    httplib::Headers headers;
+    std::string body;
+    std::string contentType;
+  };
+
+  bool isSuccessfulPostRequest(const PostRequestData& requestData,
+                               const std::string& errorMessage,
+                               const std::function<void(const std::string&)>& logError) {
+    auto response = postRequest(requestData, logError);
+    if (!response) return false;
+
+    if (response->first != 200) {
+      logError(errorMessage);
+      logError(response->second);
       return false;
     } else {
       return true;
     }
-    return false;
   }
 
- private:
+  std::optional<std::pair<int, std::string>> postRequest(const PostRequestData& requestData,
+                                                         const std::function<void(const std::string&)>& logError) {
+    while (true) {
+      if (std::chrono::steady_clock::now() < minAllowedRequestTime_) {
+        std::this_thread::sleep_until(minAllowedRequestTime_);
+      }
+
+      auto accessToken = getAccessToken(logError);
+      if (!accessToken) return std::nullopt;
+
+      auto headers = requestData.headers;
+      headers.insert({"Authorization", "Bearer " + accessToken.value()});
+
+      auto result = httplib::Client(requestData.domain)
+                        .Post(requestData.path.c_str(), headers, requestData.body, requestData.contentType.c_str());
+
+      if (result->status == 429 || result->status == 503) {
+        const std::string retryAfterKey = "Retry-After";
+        if (result->has_header(retryAfterKey.c_str())) {
+          int retryAfter;
+          try {
+            retryAfter = std::stoi(result->get_header_value(retryAfterKey.c_str()));
+            std::lock_guard<std::mutex> lock(backoffMutex_);
+            minAllowedRequestTime_ = std::chrono::steady_clock::now() + std::chrono::seconds(retryAfter);
+          } catch (...) {
+            logError("Invalid value of Retry-After header: " + result->get_header_value(retryAfterKey.c_str()) + ".");
+            bumpExponentialBackoff();
+          }
+        } else {
+          bumpExponentialBackoff();
+        }
+      } else {
+        stopExponentialBackoff();
+        return std::make_pair(result->status, result->body);
+      }
+    }
+  }
+
+  void bumpExponentialBackoff() {
+    std::lock_guard<std::mutex> lock(backoffMutex_);
+    if (!exponentialBackoff_) {
+      exponentialBackoff_ = true;
+      exponentialBackoffValue_ = std::chrono::seconds(1);
+    } else {
+      exponentialBackoffValue_ *= 2;
+    }
+    minAllowedRequestTime_ = std::chrono::steady_clock::now() + exponentialBackoffValue_;
+  }
+
+  void stopExponentialBackoff() {
+    std::lock_guard<std::mutex> lock(backoffMutex_);
+    exponentialBackoff_ = false;
+  }
+
   void readConfig() {
     std::ifstream file(configFilename_);
     nlohmann::json configData;
@@ -191,7 +247,6 @@ class Dropbox::Implementation {
 
   void requestAuthorizationCode() {
     const std::string dropboxURL = "https://www.dropbox.com";
-    httplib::Client dropboxHTTPClient = httplib::Client(dropboxURL);
     std::cout << "Go to: " << dropboxURL << "/oauth2/authorize?client_id=" << appKey_
               << "&response_type=code&code_challenge=" << codeChallenge()
               << "&code_challenge_method=S256&token_access_type=offline" << std::endl;
