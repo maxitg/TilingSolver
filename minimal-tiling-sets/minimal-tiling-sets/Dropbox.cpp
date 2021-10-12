@@ -56,7 +56,7 @@ class Dropbox::Implementation {
     return isSuccessfulPostRequest({"https://content.dropboxapi.com",
                                     "/2/files/upload",
                                     {{"Dropbox-API-Arg",
-                                      nlohmann::json({{"path", dataDirectory_ + "/" + filename + ".lock"},
+                                      nlohmann::json({{"path", dataDirectory_ + "/." + filename + ".lock"},
                                                       {"mode", "add"},
                                                       {"autorename", false},
                                                       {"mute", true},
@@ -72,7 +72,7 @@ class Dropbox::Implementation {
     return isSuccessfulPostRequest({"https://api.dropboxapi.com",
                                     "/2/files/delete_v2",
                                     {},
-                                    nlohmann::json({{"path", dataDirectory_ + "/" + filename + ".lock"}}).dump(),
+                                    nlohmann::json({{"path", dataDirectory_ + "/." + filename + ".lock"}}).dump(),
                                     "application/json"},
                                    "Failed to unlock the data file.",
                                    logError);
