@@ -103,7 +103,7 @@ class MaskManager::Implementation {
       recordDoneTasks(&status.value());
       startJobsIfNeeded(tasks.value(), &status.value());
       updateIdleThreads(&status.value());
-      // TODO: sort MasksDone and MasksInProgress.
+      sortMasks(&status.value());
       // TODO: add version to status.
       // TODO: figure out what to do with progress monitoring.
       // TODO: hide lock files.
@@ -129,6 +129,7 @@ class MaskManager::Implementation {
       availableThreads_ = 0;
       updateIdleThreads(&status.value());
       removeOurMasks(&status.value());
+      sortMasks(&status.value());
       while (!dropbox_.uploadJSON("status.json", status.value(), cerrPrint)) {
         std::this_thread::sleep_for(sleepBetweenUploadTries_);
       };
@@ -167,6 +168,19 @@ class MaskManager::Implementation {
       masksDone_.pop();
     }
     (*status)[masksInProgressKey] = newMasksInProgress;
+  }
+
+  void sortMasks(nlohmann::json* status) {
+    auto comparison = [](const std::string& first, const std::string& second) {
+      auto firstMask = parseMaskDescription(first);
+      auto secondMask = parseMaskDescription(second);
+      if (!firstMask || !secondMask) return first < second;
+      if (firstMask->size.first != secondMask->size.first) return firstMask->size.first < secondMask->size.first;
+      if (firstMask->size.second != secondMask->size.second) return firstMask->size.second < secondMask->size.second;
+      return firstMask->id < secondMask->id;
+    };
+    std::sort((*status)[masksDoneKey].begin(), (*status)[masksDoneKey].end(), comparison);
+    std::sort((*status)[masksInProgressKey].begin(), (*status)[masksInProgressKey].end(), comparison);
   }
 
   struct MaskSpec {
