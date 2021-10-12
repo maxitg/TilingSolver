@@ -94,7 +94,7 @@ class Mask::Implementation {
       forbidMinimalSet(minimalSet);
     }
     if (!periodLowerBounds_.empty()) {
-      printWithTimeAndMask(std::to_string(periodLowerBounds_.size()) + " sets have no periods.");
+      logWithTime("Startup: " + std::to_string(periodLowerBounds_.size()) + " sets have no periods.");
     }
     initSymmetries();
   }
@@ -120,22 +120,21 @@ class Mask::Implementation {
       syncInProgress_ = false;
       return;
     }
-    printWithTimeAndMask("Syncing with Dropbox...");
 
     bool isMergeSuccessful = false;
     // All operations must succeed. Otherwise, data may be lost.
     while (!lockDropboxFile()) {
       std::this_thread::sleep_for(sleepBetweenLockTries_);
-      printWithTimeAndMask("Retrying lock...");
+      logWithTime("Retrying lock...");
     }
     std::optional<nlohmann::json> json;
     while (!isMergeSuccessful) {
       while (!(json = jsonFromDropbox())) {
         std::this_thread::sleep_for(sleepBetweenFileDownloads_);
-        printWithTimeAndMask("Retrying download...");
+        logWithTime("Retrying download...");
       }
       if (!mergeData(&json.value())) {
-        printWithTimeAndMask(
+        logWithTime(
             "Waiting " +
             std::to_string(std::chrono::duration_cast<std::chrono::seconds>(sleepBetweenMergeConflicts_).count()) +
             " seconds for the user to fix the conflict.");
@@ -146,37 +145,33 @@ class Mask::Implementation {
     }
     while (!writeToDropbox(json.value())) {
       std::this_thread::sleep_for(sleepBetweenFileUploads_);
-      printWithTimeAndMask("Retrying upload...");
+      logWithTime("Retrying upload...");
     }
     while (!unlockDropboxFile()) {
       std::this_thread::sleep_for(sleepBetweenUnlockTries_);
-      printWithTimeAndMask("Retrying unlock...");
+      logWithTime("Retrying unlock...");
     }
 
     lastResultsSavingTime_ = std::chrono::steady_clock::now();
-    printWithTimeAndMask("Done.");
     syncInProgress_ = false;
   }
 
   bool lockDropboxFile() {
-    return dropbox_.lockFile(loggingParameters_.filename,
-                             [this](const std::string& msg) { printWithTimeAndMask(msg); });
+    return dropbox_.lockFile(loggingParameters_.filename, [this](const std::string& msg) { logWithTime(msg); });
   }
 
   bool unlockDropboxFile() {
-    return dropbox_.unlockFile(loggingParameters_.filename,
-                               [this](const std::string& msg) { printWithTimeAndMask(msg); });
+    return dropbox_.unlockFile(loggingParameters_.filename, [this](const std::string& msg) { logWithTime(msg); });
   }
 
   std::optional<nlohmann::json> jsonFromDropbox() {
     return dropbox_.downloadJSON(loggingParameters_.filename,
                                  {{"Version", expectedDataVersion}},
-                                 [this](const std::string& msg) { printWithTimeAndMask(msg); });
+                                 [this](const std::string& msg) { logWithTime(msg); });
   }
 
   bool writeToDropbox(const nlohmann::json& json) {
-    return dropbox_.uploadJSON(
-        loggingParameters_.filename, json, [this](const std::string& msg) { printWithTimeAndMask(msg); });
+    return dropbox_.uploadJSON(loggingParameters_.filename, json, [this](const std::string& msg) { logWithTime(msg); });
   }
 
   bool mergeData(nlohmann::json* data) {
@@ -305,7 +300,7 @@ class Mask::Implementation {
   }
 
   void printSynchronizationError(const std::string& message) const {
-    printWithTimeAndMask("WARNING: " + message + " " + loggingParameters_.filename + ".");
+    logWithTime("WARNING: " + message + " " + loggingParameters_.filename + ".");
   }
 
   std::string setDescription(const std::vector<bool>& set) {
@@ -385,7 +380,7 @@ class Mask::Implementation {
         }
       }
     }
-    printWithTimeAndMask("Found " + std::to_string(symmetries_.size()) + " symmetries.");
+    logWithTime("Startup: found " + std::to_string(symmetries_.size()) + " symmetries.");
   }
 
   static std::optional<PatternSet> flipZeroOne(const PatternSet& input) {
@@ -613,9 +608,9 @@ class Mask::Implementation {
 
   void solve() {
     if (isDone_) {
-      printWithTimeAndMask("Already done.");
+      logWithTime("Startup: already done.");
     } else {
-      printWithTimeAndMask("Searching for minimal sets...");
+      logWithTime("Startup: starting the search...");
     }
 
     while (!isDone_ && !terminationRequested_) {
@@ -644,7 +639,7 @@ class Mask::Implementation {
       } else {
         isDone_ = true;
         syncWithDropbox(SaveResultsPriority::Force);
-        printWithTimeAndMask("Done.");
+        logWithTime("All done.");
       }
     }
 
@@ -652,9 +647,12 @@ class Mask::Implementation {
   }
 
   void printResults() const {
-    printWithTimeAndMask("There are a total of " + std::to_string(periods_.size()) + " minimal sets.");
-    printWithTimeAndMask("Maximal period is " + std::to_string(maxPeriod_));
-    printWithTimeAndMask("Largest finite grid is " + std::to_string(minimalGridSize_));
+    std::string periodCount = "✓✓✓ " + std::to_string(periods_.size());
+    std::string maxPeriod = "<> " + std::to_string(maxPeriod_);
+    std::string minGridSize = "# " + std::to_string(minimalGridSize_);
+    std::string maxSetSize = "|| " + std::to_string(maxSetSize_);
+
+    logWithTime(periodCount + " " + maxPeriod + " " + minGridSize + " " + maxSetSize);
   }
 
   void logProgress() {
@@ -669,15 +667,16 @@ class Mask::Implementation {
     std::string minGridSize = "# " + std::to_string(minimalGridSize_);
     std::string maxSetSize = "|| " + std::to_string(maxSetSize_);
 
-    printWithTimeAndMask(periodCount + " " + unknownString + " " + maxPeriod + " " + minGridSize + " " + maxSetSize);
+    logWithTime(periodCount + " " + unknownString + " " + maxPeriod + " " + minGridSize + " " + maxSetSize);
     lastProgressLogTime_ = std::chrono::steady_clock::now();
   }
 
-  void printWithTimeAndMask(const std::string& msg) const {
+  void logWithTime(const std::string& msg) const {
     auto t = std::time(nullptr);
     auto tm = *std::localtime(&t);
-    *loggingParameters_.progressStream << std::put_time(&tm, "%d-%m-%Y %H-%M-%S") << " [" << maskSize_.first << "-"
-                                       << maskSize_.second << "-" << maskID_ << "]: " << msg << std::endl;
+    std::stringstream timeStream;
+    timeStream << std::put_time(&tm, "%d-%m-%Y %H-%M-%S");
+    loggingParameters_.log(timeStream.str() + ": " + msg);
   }
 
   size_t addAndForbidSymmetricSets(const std::vector<bool>& set, int period) {

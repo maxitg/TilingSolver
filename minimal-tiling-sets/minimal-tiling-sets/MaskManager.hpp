@@ -11,8 +11,6 @@ namespace TilingSystem {
 class MaskManager {
  public:
   struct LoggingParameters {
-    std::ostream* progressStream = &std::cout;
-    std::chrono::duration<float> progressLoggingPeriod = std::chrono::milliseconds(1202);
     std::chrono::duration<float> resultsSavingPeriod = std::chrono::seconds(308);
   };
 

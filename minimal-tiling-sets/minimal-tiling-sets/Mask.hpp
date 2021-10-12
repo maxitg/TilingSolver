@@ -13,7 +13,7 @@ namespace TilingSystem {
 class Mask {
  public:
   struct LoggingParameters {
-    std::ostream* progressStream = &std::cout;
+    std::function<void(const std::string&)> log = {};
     std::chrono::duration<float> progressLoggingPeriod = std::chrono::seconds(0);
     std::string filename;
     std::chrono::duration<float> resultsSavingPeriod = std::chrono::seconds(308);

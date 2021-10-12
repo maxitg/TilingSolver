@@ -22,6 +22,7 @@ class MaskManager::Implementation {
   const std::string idleCPUsKey = "IdleCPUs";
   const std::string masksDoneKey = "MasksDone";
   const std::string masksInProgressKey = "MasksInProgress";
+  const std::string maskStatusKey = "MaskStatus";
 
   const nlohmann::json defaultStatus = {{versionKey, expectedStatusVersion_},
                                         {idleCPUsKey, 0},
@@ -35,6 +36,8 @@ class MaskManager::Implementation {
   std::chrono::time_point<std::chrono::steady_clock> lastProgressLogTime_ =
       std::chrono::time_point<std::chrono::steady_clock>::min();
 
+  const std::string statusFilename = ".status.json";
+
   int availableThreads_;
   int lastReportedAvailableThreads_ = 0;
 
@@ -42,6 +45,9 @@ class MaskManager::Implementation {
   std::queue<std::string> masksDone_;
   std::mutex ourMasksInProgressMutex_;
   std::unordered_set<std::string> ourMasksInProgress_;
+
+  std::mutex maskStatusMutex_;
+  std::unordered_map<std::string, std::string> maskStatus_;
 
   std::vector<std::thread> threads_;
 
@@ -99,26 +105,30 @@ class MaskManager::Implementation {
     std::optional<nlohmann::json> tasks;
     if (!(tasks = dropbox_.downloadJSON("tasks.json", nlohmann::json::array(), cerrPrint))) return;
 
-    if (!dropbox_.lockFile("status.json", cerrPrint)) return;
+    if (!dropbox_.lockFile(statusFilename, cerrPrint)) return;
 
-    auto status = dropbox_.downloadJSON("status.json", defaultStatus, cerrPrint);
+    auto status = dropbox_.downloadJSON(statusFilename, defaultStatus, cerrPrint);
     if (isValidStatus(status)) {
       recordDoneTasks(&status.value());
       startJobsIfNeeded(tasks.value(), &status.value());
       updateIdleThreads(&status.value());
+      updateMaskStatus(&status.value());
       sortMasks(&status.value());
-      // TODO: figure out what to do with progress monitoring.
+      // TODO: move mask status to MasksDone and MasksInProgress, and make it machine readable
+      // TODO: add masks todo.
       // TODO: defend against bad json files.
-      while (!dropbox_.uploadJSON("status.json", status.value(), cerrPrint)) {
+      // TODO: implement provision/setup scripts.
+      // TODO: convert old result jsons to the new format.
+      while (!dropbox_.uploadJSON(statusFilename, status.value(), cerrPrint)) {
         std::this_thread::sleep_for(sleepBetweenUploadTries_);
       };
     } else {
-      std::cerr << "Cannot get status.json of expected version " << expectedStatusVersion_ << ". Terminating now..."
-                << std::endl;
+      std::cerr << "Cannot get " + statusFilename + " of expected version " << expectedStatusVersion_
+                << ". Terminating now..." << std::endl;
       requestTermination();
     }
 
-    while (!dropbox_.unlockFile("status.json", cerrPrint)) {
+    while (!dropbox_.unlockFile(statusFilename, cerrPrint)) {
       std::this_thread::sleep_for(sleepBetweenUnlockTries_);
     }
     syncInProgress_ = false;
@@ -126,26 +136,26 @@ class MaskManager::Implementation {
   }
 
   void terminationSync() {
-    std::cout << "Notifying status.json we are no longer available." << std::endl;
+    std::cout << "Notifying " + statusFilename + " we are no longer available." << std::endl;
     std::lock_guard<std::mutex> terminationLock(terminationSyncMutex_);
 
-    if (!dropbox_.lockFile("status.json", cerrPrint)) return;
-    auto status = dropbox_.downloadJSON("status.json", defaultStatus, cerrPrint);
+    if (!dropbox_.lockFile(statusFilename, cerrPrint)) return;
+    auto status = dropbox_.downloadJSON(statusFilename, defaultStatus, cerrPrint);
     if (isValidStatus(status)) {
       availableThreads_ = 0;
       updateIdleThreads(&status.value());
       removeOurMasks(&status.value());
       sortMasks(&status.value());
-      while (!dropbox_.uploadJSON("status.json", status.value(), cerrPrint)) {
+      while (!dropbox_.uploadJSON(statusFilename, status.value(), cerrPrint)) {
         std::this_thread::sleep_for(sleepBetweenUploadTries_);
       };
     }
-    while (!dropbox_.unlockFile("status.json", cerrPrint)) {
+    while (!dropbox_.unlockFile(statusFilename, cerrPrint)) {
       std::this_thread::sleep_for(sleepBetweenUnlockTries_);
     }
 
     terminated_ = true;
-    std::cout << "status.json termination update done." << std::endl;
+    std::cout << statusFilename + " termination update done." << std::endl;
   }
 
   bool isValidStatus(const std::optional<nlohmann::json>& status) {
@@ -175,10 +185,18 @@ class MaskManager::Implementation {
         std::lock_guard<std::mutex> lock(ourMasksInProgressMutex_);
         ourMasksInProgress_.erase(masksDone_.front());
       }
+      std::cout << "Done: " << masksDone_.front() << std::endl;
       ++availableThreads_;
       masksDone_.pop();
     }
     (*status)[masksInProgressKey] = newMasksInProgress;
+  }
+
+  void updateMaskStatus(nlohmann::json* status) {
+    std::lock_guard<std::mutex> lock(maskStatusMutex_);
+    for (const auto& [maskName, maskStatus] : maskStatus_) {
+      (*status)[maskStatusKey][maskName] = maskStatus;
+    }
   }
 
   void sortMasks(nlohmann::json* status) {
@@ -221,12 +239,15 @@ class MaskManager::Implementation {
         std::lock_guard<std::mutex> lock(ourMasksInProgressMutex_);
         ourMasksInProgress_.insert(std::string(task));
       }
+      std::cout << "Working on " << std::string(task) << "..." << std::endl;
       threads_.push_back(std::thread([this, task, maskSpec] {
         Mask::LoggingParameters parameters;
         parameters.filename = std::string(task) + ".json";
-        parameters.progressLoggingPeriod = loggingParameters_.progressLoggingPeriod;
-        parameters.progressStream = loggingParameters_.progressStream;
         parameters.resultsSavingPeriod = loggingParameters_.resultsSavingPeriod;
+        parameters.log = [this, &task](const std::string& message) {
+          std::lock_guard<std::mutex> lock(maskStatusMutex_);
+          maskStatus_[task] = message;
+        };
         std::shared_ptr<Mask> mask = std::make_shared<Mask>(maskSpec->size, maskSpec->id, dropbox_, parameters);
         maskPtrs_.push_back(mask);
         mask->findMinimalSets();
