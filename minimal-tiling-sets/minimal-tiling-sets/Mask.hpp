@@ -21,6 +21,8 @@ class Mask {
 
   Mask(const std::pair<int, int>& size, int id, Dropbox& dropbox, const LoggingParameters& parameters);
   void findMinimalSets();
+  void requestTermination();
+  bool canBeSafelyTerminated();
 
  private:
   class Implementation;

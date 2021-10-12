@@ -18,6 +18,8 @@ class MaskManager {
 
   MaskManager(Dropbox& dropbox, const LoggingParameters& parameters);
   void run(int threadCount);
+  void requestTermination();
+  bool canBeSafelyTerminated();
 
  private:
   class Implementation;

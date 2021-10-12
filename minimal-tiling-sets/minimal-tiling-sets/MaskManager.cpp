@@ -37,8 +37,18 @@ class MaskManager::Implementation {
 
   std::mutex masksDoneMutex_;
   std::queue<std::string> masksDone_;
+  std::mutex ourMasksInProgressMutex_;
+  std::unordered_set<std::string> ourMasksInProgress_;
 
   std::vector<std::thread> threads_;
+
+  std::vector<std::weak_ptr<Mask>> maskPtrs_;
+
+  bool terminationStarted_ = false;
+  bool terminationRequested_ = false;
+  bool syncInProgress_ = false;
+  bool terminated_ = false;
+  std::mutex terminationSyncMutex_;
 
  public:
   Implementation(Dropbox& dropbox, const LoggingParameters& parameters)
@@ -46,14 +56,43 @@ class MaskManager::Implementation {
 
   void run(int threadCount) {
     availableThreads_ = threadCount;
-    while (true) {
+    while (!terminationRequested_) {
       runOnce();
       std::this_thread::sleep_for(sleepBetweenStatusUpdates_);
     }
   }
 
+  void requestTermination() {
+    if (terminationStarted_) return;
+    terminationStarted_ = true;
+    for (const auto& maskPtr : maskPtrs_) {
+      auto sharedPtr = maskPtr.lock();
+      if (sharedPtr) sharedPtr->requestTermination();
+    }
+    terminationRequested_ = true;
+    if (!syncInProgress_) terminationSync();
+  }
+
+  bool canBeSafelyTerminated() {
+    if (!terminated_) return false;
+    for (const auto& maskPtr : maskPtrs_) {
+      auto sharedPtr = maskPtr.lock();
+      if (sharedPtr && !sharedPtr->canBeSafelyTerminated()) {
+        std::cout << "Cannot terminate yet due to mask data syncing..." << std::endl;
+        return false;
+      }
+    }
+    return true;
+  }
+
  private:
   void runOnce() {
+    syncInProgress_ = true;
+    // This is needed in case termination is requested just before entering this function
+    if (terminationRequested_) {
+      syncInProgress_ = false;
+      return;
+    }
     std::optional<nlohmann::json> tasks;
     if (!(tasks = dropbox_.downloadJSON("tasks.json", nlohmann::json::array(), cerrPrint))) return;
 
@@ -76,6 +115,39 @@ class MaskManager::Implementation {
     while (!dropbox_.unlockFile("status.json", cerrPrint)) {
       std::this_thread::sleep_for(sleepBetweenUnlockTries_);
     }
+    syncInProgress_ = false;
+    if (terminationRequested_) terminationSync();
+  }
+
+  void terminationSync() {
+    std::cout << "Notifying status.json we are no longer available." << std::endl;
+    std::lock_guard<std::mutex> terminationLock(terminationSyncMutex_);
+
+    if (!dropbox_.lockFile("status.json", cerrPrint)) return;
+    auto status = dropbox_.downloadJSON("status.json", defaultStatus, cerrPrint);
+    if (status) {
+      availableThreads_ = 0;
+      updateIdleThreads(&status.value());
+      removeOurMasks(&status.value());
+      while (!dropbox_.uploadJSON("status.json", status.value(), cerrPrint)) {
+        std::this_thread::sleep_for(sleepBetweenUploadTries_);
+      };
+    }
+    while (!dropbox_.unlockFile("status.json", cerrPrint)) {
+      std::this_thread::sleep_for(sleepBetweenUnlockTries_);
+    }
+
+    terminated_ = true;
+    std::cout << "status.json termination update done." << std::endl;
+  }
+
+  void removeOurMasks(nlohmann::json* status) {
+    std::lock_guard<std::mutex> ourMasksInProgressLock(ourMasksInProgressMutex_);
+    std::unordered_set<std::string> newMasksInProgress;
+    for (const auto& mask : (*status)[masksInProgressKey]) {
+      if (!ourMasksInProgress_.count(mask)) newMasksInProgress.insert(std::string(mask));
+    }
+    (*status)[masksInProgressKey] = newMasksInProgress;
   }
 
   void recordDoneTasks(nlohmann::json* status) {
@@ -87,6 +159,10 @@ class MaskManager::Implementation {
     while (!masksDone_.empty()) {
       (*status)[masksDoneKey].push_back(masksDone_.front());
       newMasksInProgress.erase(masksDone_.front());
+      {
+        std::lock_guard<std::mutex> lock(ourMasksInProgressMutex_);
+        ourMasksInProgress_.erase(masksDone_.front());
+      }
       ++availableThreads_;
       masksDone_.pop();
     }
@@ -117,14 +193,19 @@ class MaskManager::Implementation {
         std::cerr << "Invalid mask specification in tasks.json: " << task << std::endl;
         continue;
       }
+      {
+        std::lock_guard<std::mutex> lock(ourMasksInProgressMutex_);
+        ourMasksInProgress_.insert(std::string(task));
+      }
       threads_.push_back(std::thread([this, task, maskSpec] {
         Mask::LoggingParameters parameters;
         parameters.filename = std::string(task) + ".json";
         parameters.progressLoggingPeriod = loggingParameters_.progressLoggingPeriod;
         parameters.progressStream = loggingParameters_.progressStream;
         parameters.resultsSavingPeriod = loggingParameters_.resultsSavingPeriod;
-        Mask mask(maskSpec->size, maskSpec->id, dropbox_, parameters);
-        mask.findMinimalSets();
+        std::shared_ptr<Mask> mask = std::make_shared<Mask>(maskSpec->size, maskSpec->id, dropbox_, parameters);
+        maskPtrs_.push_back(mask);
+        mask->findMinimalSets();
         std::lock_guard<std::mutex> masksDoneLock(masksDoneMutex_);
         masksDone_.push(task);
       }));
@@ -167,4 +248,8 @@ MaskManager::MaskManager(Dropbox& dropbox, const MaskManager::LoggingParameters&
     : implementation_(std::make_shared<Implementation>(dropbox, parameters)) {}
 
 void MaskManager::run(int threadCount) { implementation_->run(threadCount); }
+
+void MaskManager::requestTermination() { implementation_->requestTermination(); }
+
+bool MaskManager::canBeSafelyTerminated() { return implementation_->canBeSafelyTerminated(); }
 }  // namespace TilingSystem

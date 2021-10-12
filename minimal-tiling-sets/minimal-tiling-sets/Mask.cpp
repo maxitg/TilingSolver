@@ -72,6 +72,9 @@ class Mask::Implementation {
   const std::chrono::milliseconds sleepBetweenFileUploads_ = std::chrono::milliseconds(1202);
   const std::chrono::milliseconds sleepBetweenUnlockTries_ = std::chrono::milliseconds(1202);
 
+  bool terminationRequested_ = false;
+  bool syncInProgress_ = false;
+
  public:
   Implementation(const std::pair<int, int>& size, int id, Dropbox& dropbox, const LoggingParameters& loggingParameters)
       : maskSize_(size),
@@ -98,12 +101,23 @@ class Mask::Implementation {
 
   void findMinimalSets() { solve(); }
 
+  void requestTermination() { terminationRequested_ = true; }
+
+  bool canBeSafelyTerminated() { return terminationRequested_ && !syncInProgress_; }
+
  private:
   enum class SaveResultsPriority { Normal, Force };
 
   void syncWithDropbox(const SaveResultsPriority& priority) {
+    syncInProgress_ = true;
+    // This is needed in case termination is requested just before entering this function
+    if (terminationRequested_) {
+      syncInProgress_ = false;
+      return;
+    }
     if (priority != SaveResultsPriority::Force &&
         std::chrono::steady_clock::now() < lastResultsSavingTime_ + loggingParameters_.resultsSavingPeriod) {
+      syncInProgress_ = false;
       return;
     }
     printWithTimeAndMask("Syncing with Dropbox...");
@@ -141,6 +155,7 @@ class Mask::Implementation {
 
     lastResultsSavingTime_ = std::chrono::steady_clock::now();
     printWithTimeAndMask("Done.");
+    syncInProgress_ = false;
   }
 
   bool lockDropboxFile() {
@@ -603,7 +618,7 @@ class Mask::Implementation {
       printWithTimeAndMask("Searching for minimal sets...");
     }
 
-    while (!isDone_) {
+    while (!isDone_ && !terminationRequested_) {
       logProgress();
       syncWithDropbox(SaveResultsPriority::Normal);
       if (!periodLowerBounds_.empty()) {
@@ -633,7 +648,7 @@ class Mask::Implementation {
       }
     }
 
-    printResults();
+    if (isDone_) printResults();
   }
 
   void printResults() const {
@@ -765,4 +780,6 @@ class Mask::Implementation {
 Mask::Mask(const std::pair<int, int>& size, int id, Dropbox& dropbox, const LoggingParameters& loggingParameters)
     : implementation_(std::make_shared<Implementation>(size, id, dropbox, loggingParameters)) {}
 void Mask::findMinimalSets() { implementation_->findMinimalSets(); }
+void Mask::requestTermination() { implementation_->requestTermination(); }
+bool Mask::canBeSafelyTerminated() { return implementation_->canBeSafelyTerminated(); }
 }  // namespace TilingSystem

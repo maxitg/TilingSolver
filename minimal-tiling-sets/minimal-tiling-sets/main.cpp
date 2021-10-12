@@ -1,9 +1,15 @@
 #include <iostream>
 #include <thread>
 #include <vector>
+#include <signal.h>
 
 #include "Dropbox.hpp"
 #include "MaskManager.hpp"
+
+namespace {
+std::function<void(int)> signalHandler;
+void signalHandlerFunc(int signal) { signalHandler(signal); }
+} // namespace
 
 int main(int argc, const char* argv[]) {
   if (argc > 2) {
@@ -31,11 +37,32 @@ int main(int argc, const char* argv[]) {
 
   TilingSystem::MaskManager::LoggingParameters parameters;
 
-  // TODO: update status.json on termination
-
   try {
     TilingSystem::Dropbox dropbox(dropboxAppKey, configFilename);
     auto manager = TilingSystem::MaskManager(dropbox, parameters);
+
+    // Intercept signals to allow syncing to finish
+    std::shared_ptr<std::thread> terminatorThread;
+    const std::chrono::milliseconds sleepBetweenExitTries = std::chrono::milliseconds(75);
+    signalHandler = [&manager, &terminatorThread, &sleepBetweenExitTries](int signal) {
+      manager.requestTermination();
+      terminatorThread = std::make_shared<std::thread>([&manager, &sleepBetweenExitTries](){
+        while (true) {
+          std::this_thread::sleep_for(sleepBetweenExitTries);
+          if (manager.canBeSafelyTerminated()) {
+            std::cout << "Safe termination complete." << std::endl;
+            exit(3);
+          }
+        }
+      });
+    };
+    struct sigaction sigHandler;
+    sigHandler.sa_handler = signalHandlerFunc;
+    sigemptyset(&sigHandler.sa_mask);
+    sigaction(SIGINT, &sigHandler, NULL);
+    sigaction(SIGTERM, &sigHandler, NULL);
+    sigaction(SIGQUIT, &sigHandler, NULL);
+
     manager.run(threadCount);
   } catch (TilingSystem::Dropbox::Error& error) {
     return 1;

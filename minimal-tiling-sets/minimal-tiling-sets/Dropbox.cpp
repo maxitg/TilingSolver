@@ -15,6 +15,8 @@
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include "httplib.h"
 
+// TODO: do rate limiting on Dropbox
+
 namespace TilingSystem {
 class Dropbox::Implementation {
  private:
