@@ -108,6 +108,7 @@ class MaskManager::Implementation {
       updateIdleThreads(&status.value());
       sortMasks(&status.value());
       // TODO: figure out what to do with progress monitoring.
+      // TODO: defend against bad json files.
       while (!dropbox_.uploadJSON("status.json", status.value(), cerrPrint)) {
         std::this_thread::sleep_for(sleepBetweenUploadTries_);
       };
