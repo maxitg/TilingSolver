@@ -8,6 +8,7 @@
 #include <unordered_set>
 
 #include "Mask.hpp"
+#include "Utils.hpp"
 
 namespace TilingSystem {
 class MaskManager::Implementation {
@@ -22,14 +23,20 @@ class MaskManager::Implementation {
   const std::string idleCPUsKey = "IdleCPUs";
   const std::string masksDoneKey = "MasksDone";
   const std::string masksInProgressKey = "MasksInProgress";
-  const std::string maskStatusKey = "MaskStatus";
+  const std::string masksPausedKey = "MasksPaused";
+  const std::string masksToDoKey = "MasksToDo";
 
   const nlohmann::json defaultStatus = {{versionKey, expectedStatusVersion_},
                                         {idleCPUsKey, 0},
-                                        {masksDoneKey, nlohmann::json::array()},
-                                        {masksInProgressKey, nlohmann::json::array()}};
+                                        {masksDoneKey, nlohmann::json::object()},
+                                        {masksInProgressKey, nlohmann::json::object()},
+                                        {masksPausedKey, nlohmann::json::object()},
+                                        {masksToDoKey, nlohmann::json::object()}};
 
-  const std::function<void(const std::string& msg)> cerrPrint = [](const std::string& msg) { std::cerr << msg; };
+  const std::function<void(const nlohmann::json& msg)> cerrPrint = [](const nlohmann::json& msg) {
+    std::cerr << std::string(msg["Error"]) << std::endl;
+    std::cerr << msg["Response"].dump(2) << std::endl;
+  };
 
   Dropbox& dropbox_;
   LoggingParameters loggingParameters_;
@@ -47,7 +54,7 @@ class MaskManager::Implementation {
   std::unordered_set<std::string> ourMasksInProgress_;
 
   std::mutex maskStatusMutex_;
-  std::unordered_map<std::string, std::string> maskStatus_;
+  std::unordered_map<std::string, nlohmann::json> maskStatus_;
 
   std::vector<std::thread> threads_;
 
@@ -109,16 +116,18 @@ class MaskManager::Implementation {
 
     auto status = dropbox_.downloadJSON(statusFilename, defaultStatus, cerrPrint);
     if (isValidStatus(status)) {
+      importTasks(tasks.value(), &status.value());
       recordDoneTasks(&status.value());
-      startJobsIfNeeded(tasks.value(), &status.value());
+      startJobsIfNeeded(&status.value());
       updateIdleThreads(&status.value());
       updateMaskStatus(&status.value());
-      sortMasks(&status.value());
-      // TODO: move mask status to MasksDone and MasksInProgress, and make it machine readable
+      // TODO: move mask status to MasksDone, MasksInProgress and MasksPaused, and make it machine readable
       // TODO: add masks todo.
       // TODO: defend against bad json files.
       // TODO: implement provision/setup scripts.
       // TODO: convert old result jsons to the new format.
+      // TODO: make sure symmetrization is used for periods.
+      // TODO: update with old results again.
       while (!dropbox_.uploadJSON(statusFilename, status.value(), cerrPrint)) {
         std::this_thread::sleep_for(sleepBetweenUploadTries_);
       };
@@ -144,8 +153,7 @@ class MaskManager::Implementation {
     if (isValidStatus(status)) {
       availableThreads_ = 0;
       updateIdleThreads(&status.value());
-      removeOurMasks(&status.value());
-      sortMasks(&status.value());
+      pauseOurMasks(&status.value());
       while (!dropbox_.uploadJSON(statusFilename, status.value(), cerrPrint)) {
         std::this_thread::sleep_for(sleepBetweenUploadTries_);
       };
@@ -163,24 +171,30 @@ class MaskManager::Implementation {
            status->at(versionKey) == expectedStatusVersion_;
   }
 
-  void removeOurMasks(nlohmann::json* status) {
+  void pauseOurMasks(nlohmann::json* status) {
     std::lock_guard<std::mutex> ourMasksInProgressLock(ourMasksInProgressMutex_);
-    std::unordered_set<std::string> newMasksInProgress;
-    for (const auto& mask : (*status)[masksInProgressKey]) {
-      if (!ourMasksInProgress_.count(mask)) newMasksInProgress.insert(std::string(mask));
+    for (const auto& mask : ourMasksInProgress_) {
+      if ((*status)[masksInProgressKey].count(mask)) {
+        (*status)[masksPausedKey][mask] = (*status)[masksInProgressKey][mask];
+        (*status)[masksInProgressKey].erase(mask);
+      }
     }
-    (*status)[masksInProgressKey] = newMasksInProgress;
+  }
+
+  void importTasks(const nlohmann::json& tasks, nlohmann::json* status) {
+    for (const auto& task : tasks) {
+      if (!(*status)[masksDoneKey].count(task) && !(*status)[masksInProgressKey].count(task) &&
+          !(*status)[masksPausedKey].count(task) && !(*status)[masksToDoKey].count(task)) {
+        (*status)[masksToDoKey][std::string(task)] = nlohmann::json::object();
+      }
+    }
   }
 
   void recordDoneTasks(nlohmann::json* status) {
     std::lock_guard<std::mutex> masksDoneLock(masksDoneMutex_);
-    std::unordered_set<std::string> newMasksInProgress;
-    for (const auto& mask : (*status)[masksInProgressKey]) {
-      newMasksInProgress.insert(std::string(mask));
-    }
     while (!masksDone_.empty()) {
-      (*status)[masksDoneKey].push_back(masksDone_.front());
-      newMasksInProgress.erase(masksDone_.front());
+      (*status)[masksDoneKey][masksDone_.front()] = maskStatus_[masksDone_.front()];
+      (*status)[masksInProgressKey].erase(masksDone_.front());
       {
         std::lock_guard<std::mutex> lock(ourMasksInProgressMutex_);
         ourMasksInProgress_.erase(masksDone_.front());
@@ -189,27 +203,15 @@ class MaskManager::Implementation {
       ++availableThreads_;
       masksDone_.pop();
     }
-    (*status)[masksInProgressKey] = newMasksInProgress;
   }
 
   void updateMaskStatus(nlohmann::json* status) {
     std::lock_guard<std::mutex> lock(maskStatusMutex_);
     for (const auto& [maskName, maskStatus] : maskStatus_) {
-      (*status)[maskStatusKey][maskName] = maskStatus;
+      if ((*status)[masksInProgressKey].count(maskName)) {
+        (*status)[masksInProgressKey][maskName] = maskStatus;
+      }
     }
-  }
-
-  void sortMasks(nlohmann::json* status) {
-    auto comparison = [](const std::string& first, const std::string& second) {
-      auto firstMask = parseMaskDescription(first);
-      auto secondMask = parseMaskDescription(second);
-      if (!firstMask || !secondMask) return first < second;
-      if (firstMask->size.first != secondMask->size.first) return firstMask->size.first < secondMask->size.first;
-      if (firstMask->size.second != secondMask->size.second) return firstMask->size.second < secondMask->size.second;
-      return firstMask->id < secondMask->id;
-    };
-    std::sort((*status)[masksDoneKey].begin(), (*status)[masksDoneKey].end(), comparison);
-    std::sort((*status)[masksInProgressKey].begin(), (*status)[masksInProgressKey].end(), comparison);
   }
 
   struct MaskSpec {
@@ -217,19 +219,22 @@ class MaskManager::Implementation {
     int id;
   };
 
-  void startJobsIfNeeded(const nlohmann::json& tasks, nlohmann::json* status) {
-    std::unordered_set<std::string> masksDone;
-    for (auto& task : (*status)[masksDoneKey]) {
-      masksDone.insert(std::string(task));
+  void startJobsIfNeeded(nlohmann::json* status) {
+    if (!availableThreads_) return;
+    std::vector<std::string> availableTasks;
+    for (const auto& task : (*status)[masksPausedKey].get<nlohmann::json::object_t>()) {
+      availableTasks.push_back(task.first);
     }
-    std::unordered_set<std::string> masksInProgress;
-    for (auto& task : (*status)[masksInProgressKey]) {
-      masksInProgress.insert(std::string(task));
+    for (const auto& task : (*status)[masksToDoKey].get<nlohmann::json::object_t>()) {
+      availableTasks.push_back(task.first);
     }
-    for (const auto& task : tasks) {
-      if (!availableThreads_ || masksDone.count(task) || masksInProgress.count(task)) continue;
+    for (const auto& task : availableTasks) {
+      if (!availableThreads_) continue;
       --availableThreads_;
-      (*status)[masksInProgressKey].push_back(task);
+      (*status)[masksInProgressKey][std::string(task)] = {{"Message", "About to start..."},
+                                                          {"Time", currentWallTimeString()}};
+      if ((*status)[masksPausedKey].count(task)) (*status)[masksPausedKey].erase(task);
+      if ((*status)[masksToDoKey].count(task)) (*status)[masksToDoKey].erase(task);
       std::optional<MaskSpec> maskSpec;
       if (!(maskSpec = parseMaskDescription(task))) {
         std::cerr << "Invalid mask specification in tasks.json: " << task << std::endl;
@@ -244,7 +249,7 @@ class MaskManager::Implementation {
         Mask::LoggingParameters parameters;
         parameters.filename = std::string(task) + ".json";
         parameters.resultsSavingPeriod = loggingParameters_.resultsSavingPeriod;
-        parameters.log = [this, &task](const std::string& message) {
+        parameters.updateStatus = [this, &task](const nlohmann::json& message) {
           std::lock_guard<std::mutex> lock(maskStatusMutex_);
           maskStatus_[task] = message;
         };
@@ -252,7 +257,7 @@ class MaskManager::Implementation {
         maskPtrs_.push_back(mask);
         mask->findMinimalSets();
         std::lock_guard<std::mutex> masksDoneLock(masksDoneMutex_);
-        masksDone_.push(task);
+        if (mask->isDone()) masksDone_.push(task);
       }));
     }
   }

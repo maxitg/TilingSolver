@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		6903B63227136512005C5FAB /* Dropbox.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 6903B63027136512005C5FAB /* Dropbox.cpp */; };
+		690F0ED3271774E400C17D43 /* Utils.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 690F0ED1271774E400C17D43 /* Utils.cpp */; };
 		692E76E326E55DA90091A536 /* main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 692E76E226E55DA90091A536 /* main.cpp */; };
 		692E76EE26E5614D0091A536 /* Mask.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 692E76EC26E5614D0091A536 /* Mask.cpp */; };
 		699558622714AB7B00851C1C /* MaskManager.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 699558602714AB7B00851C1C /* MaskManager.cpp */; };
@@ -29,6 +30,8 @@
 		6903B62F271340AD005C5FAB /* httplib.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = httplib.h; sourceTree = "<group>"; };
 		6903B63027136512005C5FAB /* Dropbox.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Dropbox.cpp; sourceTree = "<group>"; };
 		6903B63127136512005C5FAB /* Dropbox.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Dropbox.hpp; sourceTree = "<group>"; };
+		690F0ED1271774E400C17D43 /* Utils.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Utils.cpp; sourceTree = "<group>"; };
+		690F0ED2271774E400C17D43 /* Utils.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Utils.hpp; sourceTree = "<group>"; };
 		692E76DF26E55DA90091A536 /* minimal-tiling-sets */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "minimal-tiling-sets"; sourceTree = BUILT_PRODUCTS_DIR; };
 		692E76E226E55DA90091A536 /* main.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = main.cpp; sourceTree = "<group>"; };
 		692E76EC26E5614D0091A536 /* Mask.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Mask.cpp; sourceTree = "<group>"; };
@@ -75,6 +78,8 @@
 				6903B63027136512005C5FAB /* Dropbox.cpp */,
 				699558612714AB7B00851C1C /* MaskManager.hpp */,
 				699558602714AB7B00851C1C /* MaskManager.cpp */,
+				690F0ED2271774E400C17D43 /* Utils.hpp */,
+				690F0ED1271774E400C17D43 /* Utils.cpp */,
 			);
 			path = "minimal-tiling-sets";
 			sourceTree = "<group>";
@@ -139,6 +144,7 @@
 				692E76E326E55DA90091A536 /* main.cpp in Sources */,
 				6903B63227136512005C5FAB /* Dropbox.cpp in Sources */,
 				692E76EE26E5614D0091A536 /* Mask.cpp in Sources */,
+				690F0ED3271774E400C17D43 /* Utils.cpp in Sources */,
 				699558622714AB7B00851C1C /* MaskManager.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

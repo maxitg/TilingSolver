@@ -4,6 +4,7 @@
 #include <chrono>
 #include <iostream>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <utility>
 #include <vector>
 
@@ -13,8 +14,7 @@ namespace TilingSystem {
 class Mask {
  public:
   struct LoggingParameters {
-    std::function<void(const std::string&)> log = {};
-    std::chrono::duration<float> progressLoggingPeriod = std::chrono::seconds(0);
+    std::function<void(const nlohmann::json&)> updateStatus = {};
     std::string filename;
     std::chrono::duration<float> resultsSavingPeriod = std::chrono::seconds(308);
   };
@@ -23,6 +23,7 @@ class Mask {
   void findMinimalSets();
   void requestTermination();
   bool canBeSafelyTerminated();
+  bool isDone();
 
  private:
   class Implementation;

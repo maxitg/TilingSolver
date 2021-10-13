@@ -4,8 +4,8 @@
 #include <cryptominisat5/cryptominisat.h>
 
 #include <algorithm>
+#include <chrono>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <map>
 #include <nlohmann/json.hpp>
@@ -15,6 +15,8 @@
 #include <thread>
 #include <unordered_set>
 #include <vector>
+
+#include "Utils.hpp"
 
 namespace TilingSystem {
 using PatternSet = std::vector<std::vector<std::vector<int>>>;
@@ -46,8 +48,8 @@ class Mask::Implementation {
   Dropbox& dropbox_;
   LoggingParameters loggingParameters_;
 
-  std::chrono::time_point<std::chrono::steady_clock> lastProgressLogTime_ =
-      std::chrono::time_point<std::chrono::steady_clock>::min();
+  mutable nlohmann::json currentStatus_;
+
   std::chrono::time_point<std::chrono::steady_clock> lastResultsSavingTime_ =
       std::chrono::time_point<std::chrono::steady_clock>::min();
 
@@ -93,9 +95,6 @@ class Mask::Implementation {
       maxPeriod_ = std::max(maxPeriod_, static_cast<int>(period));
       forbidMinimalSet(minimalSet);
     }
-    if (!periodLowerBounds_.empty()) {
-      logWithTime("Startup: " + std::to_string(periodLowerBounds_.size()) + " sets have no periods.");
-    }
     initSymmetries();
   }
 
@@ -104,6 +103,8 @@ class Mask::Implementation {
   void requestTermination() { terminationRequested_ = true; }
 
   bool canBeSafelyTerminated() { return terminationRequested_ && !syncInProgress_; }
+
+  bool isDone() { return isDone_; }
 
  private:
   enum class SaveResultsPriority { Normal, Force };
@@ -125,19 +126,13 @@ class Mask::Implementation {
     // All operations must succeed. Otherwise, data may be lost.
     while (!lockDropboxFile()) {
       std::this_thread::sleep_for(sleepBetweenLockTries_);
-      logWithTime("Retrying lock...");
     }
     std::optional<nlohmann::json> json;
     while (!isMergeSuccessful) {
       while (!(json = jsonFromDropbox())) {
         std::this_thread::sleep_for(sleepBetweenFileDownloads_);
-        logWithTime("Retrying download...");
       }
       if (!mergeData(&json.value())) {
-        logWithTime(
-            "Waiting " +
-            std::to_string(std::chrono::duration_cast<std::chrono::seconds>(sleepBetweenMergeConflicts_).count()) +
-            " seconds for the user to fix the conflict.");
         std::this_thread::sleep_for(sleepBetweenMergeConflicts_);
       } else {
         isMergeSuccessful = true;
@@ -145,33 +140,33 @@ class Mask::Implementation {
     }
     while (!writeToDropbox(json.value())) {
       std::this_thread::sleep_for(sleepBetweenFileUploads_);
-      logWithTime("Retrying upload...");
     }
     while (!unlockDropboxFile()) {
       std::this_thread::sleep_for(sleepBetweenUnlockTries_);
-      logWithTime("Retrying unlock...");
     }
 
+    if (currentStatus_.count("Error")) logWithTime({{"Message", "Synchronization error is resolved."}});
     lastResultsSavingTime_ = std::chrono::steady_clock::now();
     syncInProgress_ = false;
   }
 
   bool lockDropboxFile() {
-    return dropbox_.lockFile(loggingParameters_.filename, [this](const std::string& msg) { logWithTime(msg); });
+    return dropbox_.lockFile(loggingParameters_.filename, [this](const nlohmann::json& msg) { logWithTime(msg); });
   }
 
   bool unlockDropboxFile() {
-    return dropbox_.unlockFile(loggingParameters_.filename, [this](const std::string& msg) { logWithTime(msg); });
+    return dropbox_.unlockFile(loggingParameters_.filename, [this](const nlohmann::json& msg) { logWithTime(msg); });
   }
 
   std::optional<nlohmann::json> jsonFromDropbox() {
     return dropbox_.downloadJSON(loggingParameters_.filename,
                                  {{"Version", expectedDataVersion}},
-                                 [this](const std::string& msg) { logWithTime(msg); });
+                                 [this](const nlohmann::json& msg) { logWithTime(msg); });
   }
 
   bool writeToDropbox(const nlohmann::json& json) {
-    return dropbox_.uploadJSON(loggingParameters_.filename, json, [this](const std::string& msg) { logWithTime(msg); });
+    return dropbox_.uploadJSON(
+        loggingParameters_.filename, json, [this](const nlohmann::json& msg) { logWithTime(msg); });
   }
 
   bool mergeData(nlohmann::json* data) {
@@ -252,7 +247,7 @@ class Mask::Implementation {
     return true;
   }
 
-  nlohmann::json jsonFromMap(const std::map<std::vector<bool>, int>& map) {
+  static nlohmann::json jsonFromMap(const std::map<std::vector<bool>, int>& map) {
     nlohmann::json result = nlohmann::json::object();
     for (const auto& [set, value] : map) {
       result[setDescription(set)] = value;
@@ -300,10 +295,10 @@ class Mask::Implementation {
   }
 
   void printSynchronizationError(const std::string& message) const {
-    logWithTime("WARNING: " + message + " " + loggingParameters_.filename + ".");
+    logWithTime({{"Error", "Merge conflict: " + message + " " + loggingParameters_.filename + "."}});
   }
 
-  std::string setDescription(const std::vector<bool>& set) {
+  static std::string setDescription(const std::vector<bool>& set) {
     std::ostringstream str;
     int digitIdx = 0;
     int currentDigit = 0;
@@ -380,7 +375,6 @@ class Mask::Implementation {
         }
       }
     }
-    logWithTime("Startup: found " + std::to_string(symmetries_.size()) + " symmetries.");
   }
 
   static std::optional<PatternSet> flipZeroOne(const PatternSet& input) {
@@ -462,7 +456,7 @@ class Mask::Implementation {
     }
   }
 
-  bool isMaskConsistent(const PatternSet& transformedSet) {
+  bool isMaskConsistent(const PatternSet& transformedSet) const {
     for (const auto& pattern : transformedSet) {
       if (maskSize_.first != pattern.size()) return false;
       int maskDigit = 1;
@@ -492,7 +486,7 @@ class Mask::Implementation {
     }
   }
 
-  std::vector<int> initPatternVariables(CMSat::SATSolver* solver) {
+  std::vector<int> initPatternVariables(CMSat::SATSolver* solver) const {
     std::vector<int> patternVariables;
     patternVariables.reserve(patternCount_);
     for (int i = 0; i < patternCount_; ++i) {
@@ -597,7 +591,7 @@ class Mask::Implementation {
     solver->add_clause(entireTileClause);
   }
 
-  int bitCount(int number) {
+  static int bitCount(int number) {
     int result = 0;
     while (number) {
       result += (number & 1);
@@ -608,9 +602,9 @@ class Mask::Implementation {
 
   void solve() {
     if (isDone_) {
-      logWithTime("Startup: already done.");
+      logWithTime({{"Message", "This mask is already done."}});
     } else {
-      logWithTime("Startup: starting the search...");
+      logWithTime({{"Message", "Starting tiling..."}});
     }
 
     while (!isDone_ && !terminationRequested_) {
@@ -639,44 +633,36 @@ class Mask::Implementation {
       } else {
         isDone_ = true;
         syncWithDropbox(SaveResultsPriority::Force);
-        logWithTime("All done.");
       }
     }
 
-    if (isDone_) printResults();
+    if (isDone_) logFinalResults();
   }
 
-  void printResults() const {
-    std::string periodCount = "✓✓✓ " + std::to_string(periods_.size());
-    std::string maxPeriod = "<> " + std::to_string(maxPeriod_);
-    std::string minGridSize = "# " + std::to_string(minimalGridSize_);
-    std::string maxSetSize = "|| " + std::to_string(maxSetSize_);
-
-    logWithTime(periodCount + " " + maxPeriod + " " + minGridSize + " " + maxSetSize);
+  nlohmann::json mainStatsJSON() const {
+    return {{"MinimalSets", periods_.size()},
+            {"MaxPeriod", maxPeriod_},
+            {"MinGridSize", minimalGridSize_},
+            {"MaxSetSize", maxSetSize_},
+            {"SymmetryOrder", symmetries_.size()}};
   }
 
-  void logProgress() {
-    if (std::chrono::steady_clock::now() < lastProgressLogTime_ + loggingParameters_.progressLoggingPeriod) return;
-    std::string periodCount = "✓ " + std::to_string(periods_.size());
-    std::string unknownString = "? " + std::to_string(periodLowerBounds_.size());
+  void logFinalResults() const { logWithTime(mainStatsJSON()); }
+
+  void logProgress() const {
+    auto progressReport = mainStatsJSON();
+    progressReport["MinimalSetCandidates"] = periodLowerBounds_.size();
     if (!periodLowerBounds_.empty()) {
-      const auto& [set, periodLowerBound] = *periodLowerBounds_.begin();
-      unknownString += " (" + setDescription(set) + ": " + std::to_string(periodLowerBound) + ")";
+      progressReport["CurrentMinimalSetCandidate"] = {{"Bits", setDescription(periodLowerBounds_.begin()->first)},
+                                                      {"PeriodLowerBound", periodLowerBounds_.begin()->second}};
     }
-    std::string maxPeriod = "<> " + std::to_string(maxPeriod_);
-    std::string minGridSize = "# " + std::to_string(minimalGridSize_);
-    std::string maxSetSize = "|| " + std::to_string(maxSetSize_);
-
-    logWithTime(periodCount + " " + unknownString + " " + maxPeriod + " " + minGridSize + " " + maxSetSize);
-    lastProgressLogTime_ = std::chrono::steady_clock::now();
+    logWithTime(progressReport);
   }
 
-  void logWithTime(const std::string& msg) const {
-    auto t = std::time(nullptr);
-    auto tm = *std::localtime(&t);
-    std::stringstream timeStream;
-    timeStream << std::put_time(&tm, "%d-%m-%Y %H-%M-%S");
-    loggingParameters_.log(timeStream.str() + ": " + msg);
+  void logWithTime(const nlohmann::json& status) const {
+    currentStatus_ = status;
+    currentStatus_["Time"] = currentWallTimeString();
+    loggingParameters_.updateStatus(currentStatus_);
   }
 
   size_t addAndForbidSymmetricSets(const std::vector<bool>& set, int period) {
@@ -697,7 +683,7 @@ class Mask::Implementation {
     return transformedSets.size();
   }
 
-  int setSize(const std::vector<bool>& set) {
+  static int setSize(const std::vector<bool>& set) {
     int result = 0;
     for (const auto value : set) {
       if (value) ++result;
@@ -781,4 +767,5 @@ Mask::Mask(const std::pair<int, int>& size, int id, Dropbox& dropbox, const Logg
 void Mask::findMinimalSets() { implementation_->findMinimalSets(); }
 void Mask::requestTermination() { implementation_->requestTermination(); }
 bool Mask::canBeSafelyTerminated() { return implementation_->canBeSafelyTerminated(); }
+bool Mask::isDone() { return implementation_->isDone(); }
 }  // namespace TilingSystem

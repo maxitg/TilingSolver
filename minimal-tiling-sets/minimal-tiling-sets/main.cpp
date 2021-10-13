@@ -46,6 +46,8 @@ int main(int argc, const char* argv[]) {
     std::shared_ptr<std::thread> terminatorThread;
     const std::chrono::milliseconds sleepBetweenExitTries = std::chrono::milliseconds(75);
     signalHandler = [&manager, &terminatorThread, &sleepBetweenExitTries](int signal) {
+      if (signal == SIGINT) std::cout << " <- ";
+      std::cout << "Requesting termination. Hold on..." << std::endl;
       manager.requestTermination();
       terminatorThread = std::make_shared<std::thread>([&manager, &sleepBetweenExitTries]() {
         while (true) {

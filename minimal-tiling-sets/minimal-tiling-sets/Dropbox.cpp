@@ -52,7 +52,7 @@ class Dropbox::Implementation {
     }
   }
 
-  bool lockFile(const std::string& filename, const std::function<void(const std::string&)>& logError) {
+  bool lockFile(const std::string& filename, const std::function<void(const nlohmann::json&)>& logError) {
     return isSuccessfulPostRequest({"https://content.dropboxapi.com",
                                     "/2/files/upload",
                                     {{"Dropbox-API-Arg",
@@ -68,7 +68,7 @@ class Dropbox::Implementation {
                                    logError);
   }
 
-  bool unlockFile(const std::string& filename, const std::function<void(const std::string&)>& logError) {
+  bool unlockFile(const std::string& filename, const std::function<void(const nlohmann::json&)>& logError) {
     return isSuccessfulPostRequest({"https://api.dropboxapi.com",
                                     "/2/files/delete_v2",
                                     {},
@@ -80,7 +80,7 @@ class Dropbox::Implementation {
 
   std::optional<nlohmann::json> downloadJSON(const std::string& filename,
                                              const nlohmann::json& defaultContents,
-                                             const std::function<void(const std::string&)>& logError) {
+                                             const std::function<void(const nlohmann::json&)>& logError) {
     auto response =
         postRequest({"https://content.dropboxapi.com",
                      "/2/files/download",
@@ -96,8 +96,7 @@ class Dropbox::Implementation {
           json["error"]["path"][".tag"] == "not_found") {
         return defaultContents;
       } else {
-        logError("Failed to download existing data from Dropbox.");
-        logError(response->second);
+        logError(jsonError("Failed to download existing data from Dropbox.", response.value()));
         return std::nullopt;
       }
     } else {
@@ -107,7 +106,7 @@ class Dropbox::Implementation {
 
   bool uploadJSON(const std::string& filename,
                   const nlohmann::json& json,
-                  const std::function<void(const std::string&)>& logError) {
+                  const std::function<void(const nlohmann::json&)>& logError) {
     return isSuccessfulPostRequest(
         {"https://content.dropboxapi.com",
          "/2/files/upload",
@@ -131,17 +130,26 @@ class Dropbox::Implementation {
 
   bool isSuccessfulPostRequest(const PostRequestData& requestData,
                                const std::string& errorMessage,
-                               const std::function<void(const std::string&)>& logError) {
+                               const std::function<void(const nlohmann::json&)>& logError) {
     auto response = postRequest(requestData, logError);
     if (!response) return false;
 
     if (response->first != 200) {
-      logError(errorMessage);
-      logError(response->second);
+      logError(jsonError(errorMessage, response.value()));
       return false;
     } else {
       return true;
     }
+  }
+
+  nlohmann::json jsonError(const std::string& message, const std::pair<int, std::string>& response) {
+    nlohmann::json responseJSON;
+    try {
+      responseJSON = nlohmann::json::parse(response.second);
+    } catch (...) {
+      responseJSON = response.second;
+    }
+    return {{"Error", message}, {"ResponseCode", response.first}, {"Response", responseJSON}};
   }
 
   std::optional<std::pair<int, std::string>> postRequest(const PostRequestData& requestData,
@@ -317,23 +325,23 @@ class Dropbox::Implementation {
 Dropbox::Dropbox(const std::string& appKey, const std::string& configFilename)
     : implementation_(std::make_shared<Implementation>(appKey, configFilename)) {}
 
-bool Dropbox::lockFile(const std::string& filename, const std::function<void(const std::string&)>& logError) {
+bool Dropbox::lockFile(const std::string& filename, const std::function<void(const nlohmann::json&)>& logError) {
   return implementation_->lockFile(filename, logError);
 }
 
-bool Dropbox::unlockFile(const std::string& filename, const std::function<void(const std::string&)>& logError) {
+bool Dropbox::unlockFile(const std::string& filename, const std::function<void(const nlohmann::json&)>& logError) {
   return implementation_->unlockFile(filename, logError);
 }
 
 std::optional<nlohmann::json> Dropbox::downloadJSON(const std::string& filename,
                                                     const nlohmann::json& defaultContents,
-                                                    const std::function<void(const std::string&)>& logError) {
+                                                    const std::function<void(const nlohmann::json&)>& logError) {
   return implementation_->downloadJSON(filename, defaultContents, logError);
 }
 
 bool Dropbox::uploadJSON(const std::string& filename,
                          const nlohmann::json& json,
-                         const std::function<void(const std::string&)>& logError) {
+                         const std::function<void(const nlohmann::json&)>& logError) {
   return implementation_->uploadJSON(filename, json, logError);
 }
 }  // namespace TilingSystem
