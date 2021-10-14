@@ -245,9 +245,9 @@ class Dropbox::Implementation {
   void writeConfig() {
     std::ofstream file(configFilename_);
     if (file.is_open()) {
-      file << nlohmann::json({{dataDirectoryKey_, dataDirectory_}, {refreshTokenKey_, refreshToken_}}).dump(2);
+      file << nlohmann::json({{dataDirectoryKey_, dataDirectory_}, {refreshTokenKey_, refreshToken_}}).dump(2) << std::endl;
     } else {
-      std::cerr << "Could not write config to " + configFilename_ + ": " + std::string(std::strerror(errno));
+      std::cerr << "Could not write config to " + configFilename_ + ": " + std::string(std::strerror(errno)) << std::endl;
       throw Error::FailedToWriteConfig;
     }
     return file.close();
