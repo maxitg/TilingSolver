@@ -10,7 +10,7 @@ echo "Installing dependencies from apt-get..."
 sudo apt-get -y update
 sudo apt-get -y upgrade
 sudo apt-get -y install build-essential cmake zlib1g-dev libm4ri-dev libsqlite3-dev help2man libboost-dev \
-                        libboost-program-options-dev gcc libssl-dev
+                        libboost-program-options-dev libboost-filesystem-dev gcc libssl-dev
 source ~/.bashrc
 echo "Done installing dependencies from apt-get."
 
