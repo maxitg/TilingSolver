@@ -99,7 +99,7 @@ class Dropbox::Implementation {
       if (json.is_object() && json.count("error") && json["error"].count("path") &&
           json["error"]["path"].count(".tag") && json["error"]["path"][".tag"].is_string() &&
           json["error"]["path"][".tag"] == "not_found") {
-        return defaultContents;
+        return std::optional(defaultContents);
       } else {
         logError(jsonError("Failed to download existing data from Dropbox.", response.value()));
         return std::nullopt;
