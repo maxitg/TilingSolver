@@ -177,6 +177,10 @@ class Dropbox::Implementation {
 
       auto result = httplib::Client(requestData.domain)
                         .Post(requestData.path.c_str(), headers, requestData.body, requestData.contentType.c_str());
+      if (!result) {
+        logError({{"Error", httplib::to_string(result.error())}});
+        return std::nullopt;
+      }
 
       if (result->status == 429 || result->status == 503) {
         const std::string retryAfterKey = "Retry-After";
@@ -307,6 +311,11 @@ class Dropbox::Implementation {
                                                             {"grant_type", "authorization_code"},
                                                             {"code_verifier", codeVerifier_},
                                                             {"client_id", appKey_}});
+    if (!result) {
+      std::cerr << "Failed to get a refresh token from Dropbox." << std::endl;
+      std::cerr << httplib::to_string(result.error()) << std::endl;
+      throw Error::FailedToGetAccessToken;
+    }
     if (result->status != 200) {
       std::cerr << "Failed to get a refresh token from Dropbox." << std::endl;
       std::cerr << "Status: " << result->status << std::endl;
@@ -319,11 +328,13 @@ class Dropbox::Implementation {
       } catch (const nlohmann::detail::parse_error& error) {
         std::cerr << "Received invalid json from Dropbox." << std::endl;
         std::cerr << error.what() << std::endl;
+        throw Error::FailedToGetAccessToken;
       }
       if (!resultJSON.is_object() || !resultJSON["refresh_token"].is_string() ||
           !resultJSON["access_token"].is_string() || !resultJSON["expires_in"].is_string()) {
         std::cerr << "Received invalid refresh/access tokens from Dropbox." << std::endl;
         std::cerr << resultJSON.dump(2) << std::endl;
+        throw Error::FailedToGetAccessToken;
       }
       refreshToken_ = resultJSON["refresh_token"];
       accessToken_ = resultJSON["access_token"];
@@ -339,6 +350,10 @@ class Dropbox::Implementation {
             .Post("/oauth2/token",
                   httplib::MultipartFormDataItems{
                       {"grant_type", "refresh_token"}, {"refresh_token", refreshToken_}, {"client_id", appKey_}});
+    if (!result) {
+      logError({{"Error", httplib::to_string(result.error())}});
+      return std::nullopt;
+    }
     if (result->status != 200) {
       logError("Failed to get an access token from Dropbox.");
       logError(result->body);
