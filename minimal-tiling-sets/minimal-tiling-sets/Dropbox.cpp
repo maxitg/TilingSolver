@@ -308,10 +308,23 @@ class Dropbox::Implementation {
                                                             {"code_verifier", codeVerifier_},
                                                             {"client_id", appKey_}});
     if (result->status != 200) {
-      std::cerr << "Failed to get a refresh token from Dropbox.";
+      std::cerr << "Failed to get a refresh token from Dropbox." << std::endl;
+      std::cerr << "Status: " << result->status << std::endl;
+      std::cerr << result->body << std::endl;
       throw Error::FailedToGetAccessToken;
     } else {
-      nlohmann::json resultJSON = nlohmann::json::parse(result->body);
+      nlohmann::json resultJSON;
+      try {
+        resultJSON = nlohmann::json::parse(result->body);
+      } catch (const nlohmann::detail::parse_error& error) {
+        std::cerr << "Received invalid json from Dropbox." << std::endl;
+        std::cerr << error.what() << std::endl;
+      }
+      if (!resultJSON.is_object() || !resultJSON["refresh_token"].is_string() ||
+          !resultJSON["access_token"].is_string() || !resultJSON["expires_in"].is_string()) {
+        std::cerr << "Received invalid refresh/access tokens from Dropbox." << std::endl;
+        std::cerr << resultJSON.dump(2) << std::endl;
+      }
       refreshToken_ = resultJSON["refresh_token"];
       accessToken_ = resultJSON["access_token"];
       accessTokenExpiration_ = std::chrono::steady_clock::now() + std::chrono::seconds(resultJSON["expires_in"]);
