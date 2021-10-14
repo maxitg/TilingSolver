@@ -90,7 +90,12 @@ class Dropbox::Implementation {
                     logError);
 
     if (response->first != 200) {
-      auto json = nlohmann::json::parse(response->second);
+      nlohmann::json json;
+      try {
+        json = nlohmann::json::parse(response->second);
+      } catch (const nlohmann::detail::parse_error&) {
+        logError({{"Error", response->second}});
+      }
       if (json.is_object() && json.count("error") && json["error"].count("path") &&
           json["error"]["path"].count(".tag") && json["error"]["path"][".tag"].is_string() &&
           json["error"]["path"][".tag"] == "not_found") {
@@ -100,7 +105,12 @@ class Dropbox::Implementation {
         return std::nullopt;
       }
     } else {
-      return nlohmann::json::parse(response->second);
+      try {
+        return nlohmann::json::parse(response->second);
+      } catch (const nlohmann::detail::parse_error& error) {
+        logError({{"Error", "Downloaded file " + filename + " is not valid JSON."}, {"Details", error.what()}});
+        return std::nullopt;
+      }
     }
   }
 
@@ -146,14 +156,14 @@ class Dropbox::Implementation {
     nlohmann::json responseJSON;
     try {
       responseJSON = nlohmann::json::parse(response.second);
-    } catch (...) {
+    } catch (const nlohmann::detail::parse_error&) {
       responseJSON = response.second;
     }
     return {{"Error", message}, {"ResponseCode", response.first}, {"Response", responseJSON}};
   }
 
   std::optional<std::pair<int, std::string>> postRequest(const PostRequestData& requestData,
-                                                         const std::function<void(const std::string&)>& logError) {
+                                                         const std::function<void(const nlohmann::json&)>& logError) {
     while (true) {
       if (std::chrono::steady_clock::now() < minAllowedRequestTime_) {
         std::this_thread::sleep_until(minAllowedRequestTime_);
@@ -172,13 +182,20 @@ class Dropbox::Implementation {
         const std::string retryAfterKey = "Retry-After";
         if (result->has_header(retryAfterKey.c_str())) {
           int retryAfter;
+          auto exceptionHandler = [this, &result, &retryAfterKey, &logError](const std::string& errorDetails) {
+            logError({{"Error",
+                       "Invalid value of Retry-After header: " + result->get_header_value(retryAfterKey.c_str()) + "."},
+                      {"Details", errorDetails}});
+            bumpExponentialBackoff();
+          };
           try {
             retryAfter = std::stoi(result->get_header_value(retryAfterKey.c_str()));
             std::lock_guard<std::mutex> lock(backoffMutex_);
             minAllowedRequestTime_ = std::chrono::steady_clock::now() + std::chrono::seconds(retryAfter);
-          } catch (...) {
-            logError("Invalid value of Retry-After header: " + result->get_header_value(retryAfterKey.c_str()) + ".");
-            bumpExponentialBackoff();
+          } catch (const std::invalid_argument& error) {
+            exceptionHandler(error.what());
+          } catch (const std::out_of_range& error) {
+            exceptionHandler(error.what());
           }
         } else {
           bumpExponentialBackoff();
@@ -210,7 +227,7 @@ class Dropbox::Implementation {
     std::ifstream file(configFilename_);
     nlohmann::json configData;
     if (file.is_open()) file >> configData;
-    if (!file.is_open() || !configData.count(dataDirectoryKey_)) {
+    if (!file.is_open() || !configData.is_object() || !configData.count(dataDirectoryKey_)) {
       std::cerr << "Config does not specify data directory. Create " + configFilename_ +
                        " with the following contents: "
                 << std::endl;
@@ -301,7 +318,7 @@ class Dropbox::Implementation {
     }
   }
 
-  std::optional<std::string> getAccessToken(const std::function<void(const std::string&)>& logError) {
+  std::optional<std::string> getAccessToken(const std::function<void(const nlohmann::json&)>& logError) {
     std::lock_guard<std::mutex> accessTokenLock(accessTokenMutex_);
     if (std::chrono::steady_clock::now() < accessTokenExpiration_) return accessToken_;
     auto result =
@@ -314,10 +331,21 @@ class Dropbox::Implementation {
       logError(result->body);
       return std::nullopt;
     } else {
-      nlohmann::json resultJSON = nlohmann::json::parse(result->body);
-      accessToken_ = resultJSON["access_token"];
-      accessTokenExpiration_ = std::chrono::steady_clock::now() + std::chrono::seconds(resultJSON["expires_in"]);
-      return accessToken_;
+      nlohmann::json resultJSON;
+      try {
+        resultJSON = nlohmann::json::parse(result->body);
+      } catch (const nlohmann::detail::parse_error& error) {
+        logError({{"Error", "Received invalid JSON instead of an access token."}, {"Details", error.what()}});
+        return std::nullopt;
+      }
+      if (resultJSON.is_object() && resultJSON.count("access_token") && resultJSON["access_token"].is_string()) {
+        accessToken_ = resultJSON["access_token"];
+        accessTokenExpiration_ = std::chrono::steady_clock::now() + std::chrono::seconds(resultJSON["expires_in"]);
+        return accessToken_;
+      } else {
+        logError({{"Error", "No access token returned by Dropbox."}});
+        return std::nullopt;
+      }
     }
   }
 };

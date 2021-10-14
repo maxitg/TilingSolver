@@ -179,7 +179,8 @@ class Mask::Implementation {
     // Maximal grid size a particular set can tile. This will only be recorded when the grid needs to be enlarged.
     const std::string maximalGridSizesKey = "MaximalGridSizes";
 
-    if (!data->count(versionKey) || (*data)[versionKey] != expectedDataVersion) {
+    if (!data->is_object() || !data->count(versionKey) || !(*data)[versionKey].is_number_integer() ||
+        (*data)[versionKey] != expectedDataVersion) {
       printSynchronizationError("Dropbox data is not of the expected version " + std::to_string(expectedDataVersion) +
                                 ".");
       return false;
@@ -268,7 +269,8 @@ class Mask::Implementation {
         std::vector<bool> set;
         try {
           set = fromSetDescription(it.key());
-        } catch (...) {
+        } catch (const SetDescriptionParseError& error) {
+          printSynchronizationError(error.what);
           return false;
         }
         if (!it.value().is_number_integer() || it.value() < 0) {
@@ -312,13 +314,16 @@ class Mask::Implementation {
     return str.str();
   }
 
+  struct SetDescriptionParseError {
+    std::string what;
+  };
+
   std::vector<bool> fromSetDescription(const std::string& description) const {
     std::vector<bool> result;
     int hexDigit = 0;
     int digitStartIndex = 0;
     if (description.length() != (patternCount_ + 3) / 4) {
-      printSynchronizationError("Invalid length of set description " + description + " in");
-      throw false;
+      throw SetDescriptionParseError{"Invalid length of set description " + description + " in"};
     }
     for (int i = 0; i < patternCount_; ++i) {
       if (i % 4 == 0) {
@@ -326,8 +331,7 @@ class Mask::Implementation {
         digitStartIndex = static_cast<int>(result.size());
         char digit = description.at(i / 4);
         if (!((digit >= '0' && digit <= '9') || (digit >= 'a' && digit <= 'f'))) {
-          printSynchronizationError("Invalid digit in set description " + description + " in");
-          throw false;
+          throw SetDescriptionParseError{"Invalid digit in set description " + description + " in"};
         }
         hexDigit = std::stoi(std::string({digit}), nullptr, 16);
       }

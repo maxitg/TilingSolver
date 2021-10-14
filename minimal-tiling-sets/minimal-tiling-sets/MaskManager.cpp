@@ -34,8 +34,7 @@ class MaskManager::Implementation {
                                         {masksToDoKey, nlohmann::json::object()}};
 
   const std::function<void(const nlohmann::json& msg)> cerrPrint = [](const nlohmann::json& msg) {
-    std::cerr << std::string(msg["Error"]) << std::endl;
-    std::cerr << msg["Response"].dump(2) << std::endl;
+    std::cerr << msg.dump(2) << std::endl;
   };
 
   Dropbox& dropbox_;
@@ -116,25 +115,17 @@ class MaskManager::Implementation {
 
     auto status = dropbox_.downloadJSON(statusFilename, defaultStatus, cerrPrint);
     if (isValidStatus(status)) {
+      addMissingKeys(&status.value());
       importTasks(tasks.value(), &status.value());
       recordDoneTasks(&status.value());
       startJobsIfNeeded(&status.value());
       updateIdleThreads(&status.value());
       updateMaskStatus(&status.value());
-      // TODO: move mask status to MasksDone, MasksInProgress and MasksPaused, and make it machine readable
-      // TODO: add masks todo.
-      // TODO: defend against bad json files.
-      // TODO: implement provision/setup scripts.
-      // TODO: convert old result jsons to the new format.
-      // TODO: make sure symmetrization is used for periods.
-      // TODO: update with old results again.
       while (!dropbox_.uploadJSON(statusFilename, status.value(), cerrPrint)) {
         std::this_thread::sleep_for(sleepBetweenUploadTries_);
       };
     } else {
-      std::cerr << "Cannot get " + statusFilename + " of expected version " << expectedStatusVersion_
-                << ". Terminating now..." << std::endl;
-      requestTermination();
+      std::cerr << "Cannot get " + statusFilename + " of expected version " << expectedStatusVersion_ << std::endl;
     }
 
     while (!dropbox_.unlockFile(statusFilename, cerrPrint)) {
@@ -173,6 +164,19 @@ class MaskManager::Implementation {
 
   void pauseOurMasks(nlohmann::json* status) {
     std::lock_guard<std::mutex> ourMasksInProgressLock(ourMasksInProgressMutex_);
+
+    if (!(*status)[masksPausedKey].is_object()) {
+      std::cerr << masksPausedKey << " in " << statusFilename << " must be an object." << std::endl;
+      std::cerr << "Cannot pause running masks, " << statusFilename << " will be inconsistent." << std::endl;
+      return;
+    }
+
+    if (!(*status)[masksInProgressKey].is_object()) {
+      std::cerr << masksInProgressKey << " in " << statusFilename << " must be an object." << std::endl;
+      std::cerr << "Cannot pause running masks, " << statusFilename << " will be inconsistent." << std::endl;
+      return;
+    }
+
     for (const auto& mask : ourMasksInProgress_) {
       if ((*status)[masksInProgressKey].count(mask)) {
         (*status)[masksPausedKey][mask] = (*status)[masksInProgressKey][mask];
@@ -181,8 +185,30 @@ class MaskManager::Implementation {
     }
   }
 
+  void addMissingKeys(nlohmann::json* status) {
+    if (!(*status).count(idleCPUsKey)) (*status)[idleCPUsKey] = 0;
+    if (!(*status).count(masksDoneKey)) (*status)[masksDoneKey] = nlohmann::json::object();
+    if (!(*status).count(masksInProgressKey)) (*status)[masksInProgressKey] = nlohmann::json::object();
+    if (!(*status).count(masksPausedKey)) (*status)[masksPausedKey] = nlohmann::json::object();
+    if (!(*status).count(masksToDoKey)) (*status)[masksToDoKey] = nlohmann::json::object();
+  }
+
   void importTasks(const nlohmann::json& tasks, nlohmann::json* status) {
+    if (!tasks.is_array()) {
+      std::cerr << "tasks.json is not an array. Skipping tasks import." << std::endl;
+      return;
+    }
+
+    if (!(*status)[masksToDoKey].is_object()) {
+      std::cerr << masksToDoKey << " is not an object in " << statusFilename << ". Skipping tasks import." << std::endl;
+      return;
+    }
+
     for (const auto& task : tasks) {
+      if (!task.is_string()) {
+        std::cerr << "Skipping task " << task << " which is not a string of form sizeY-sizeX-id." << std::endl;
+        continue;
+      }
       if (!(*status)[masksDoneKey].count(task) && !(*status)[masksInProgressKey].count(task) &&
           !(*status)[masksPausedKey].count(task) && !(*status)[masksToDoKey].count(task)) {
         (*status)[masksToDoKey][std::string(task)] = nlohmann::json::object();
@@ -192,6 +218,18 @@ class MaskManager::Implementation {
 
   void recordDoneTasks(nlohmann::json* status) {
     std::lock_guard<std::mutex> masksDoneLock(masksDoneMutex_);
+
+    if (!(*status)[masksDoneKey].is_object()) {
+      std::cerr << masksDoneKey << " in " << statusFilename << " is not an object." << std::endl;
+      std::cerr << "Cannot update tasks as done." << std::endl;
+      return;
+    }
+    if (!(*status)[masksInProgressKey].is_object()) {
+      std::cerr << masksInProgressKey << " in " << statusFilename << " is not an object." << std::endl;
+      std::cerr << "Cannot update tasks as done." << std::endl;
+      return;
+    }
+
     while (!masksDone_.empty()) {
       (*status)[masksDoneKey][masksDone_.front()] = maskStatus_[masksDone_.front()];
       (*status)[masksInProgressKey].erase(masksDone_.front());
@@ -207,6 +245,11 @@ class MaskManager::Implementation {
 
   void updateMaskStatus(nlohmann::json* status) {
     std::lock_guard<std::mutex> lock(maskStatusMutex_);
+    if (!(*status)[masksInProgressKey].is_object()) {
+      std::cerr << masksInProgressKey << " in " << statusFilename << " must be an object." << std::endl;
+      std::cerr << "Cannot update mask status." << std::endl;
+      return;
+    }
     for (const auto& [maskName, maskStatus] : maskStatus_) {
       if ((*status)[masksInProgressKey].count(maskName)) {
         (*status)[masksInProgressKey][maskName] = maskStatus;
@@ -222,22 +265,36 @@ class MaskManager::Implementation {
   void startJobsIfNeeded(nlohmann::json* status) {
     if (!availableThreads_) return;
     std::vector<std::string> availableTasks;
-    for (const auto& task : (*status)[masksPausedKey].get<nlohmann::json::object_t>()) {
-      availableTasks.push_back(task.first);
+    if (!(*status)[masksPausedKey].is_object()) {
+      std::cerr << masksPausedKey << " is not an object in " << statusFilename << std::endl;
+      std::cerr << "Cannot resume jobs." << std::endl;
+    } else {
+      for (const auto& task : (*status)[masksPausedKey].get<nlohmann::json::object_t>()) {
+        availableTasks.push_back(task.first);
+      }
     }
-    for (const auto& task : (*status)[masksToDoKey].get<nlohmann::json::object_t>()) {
-      availableTasks.push_back(task.first);
+    if (!(*status)[masksToDoKey].is_object()) {
+      std::cerr << masksToDoKey << " is not an object in " << statusFilename << std::endl;
+      std::cerr << "Cannot start new masks." << std::endl;
+    } else {
+      for (const auto& task : (*status)[masksToDoKey].get<nlohmann::json::object_t>()) {
+        availableTasks.push_back(task.first);
+      }
+    }
+    if (!(*status)[masksInProgressKey].is_object()) {
+      std::cerr << masksInProgressKey << " is not an object in " << statusFilename << std::endl;
+      std::cerr << "Cannot work on new or resume masks." << std::endl;
+      return;
     }
     for (const auto& task : availableTasks) {
       if (!availableThreads_) continue;
       --availableThreads_;
-      (*status)[masksInProgressKey][std::string(task)] = {{"Message", "About to start..."},
-                                                          {"Time", currentWallTimeString()}};
+      (*status)[masksInProgressKey][task] = {{"Message", "About to start..."}, {"Time", currentWallTimeString()}};
       if ((*status)[masksPausedKey].count(task)) (*status)[masksPausedKey].erase(task);
       if ((*status)[masksToDoKey].count(task)) (*status)[masksToDoKey].erase(task);
       std::optional<MaskSpec> maskSpec;
       if (!(maskSpec = parseMaskDescription(task))) {
-        std::cerr << "Invalid mask specification in tasks.json: " << task << std::endl;
+        std::cerr << "Skipping invalid mask specification: " << task << std::endl;
         continue;
       }
       {
@@ -288,6 +345,11 @@ class MaskManager::Implementation {
   }
 
   void updateIdleThreads(nlohmann::json* status) {
+    if (!(*status)[idleCPUsKey].is_number_integer() || (*status)[idleCPUsKey] < 0) {
+      std::cerr << idleCPUsKey << " must be a non-negative integer in " << statusFilename << std::endl;
+      std::cerr << "IdleCPU count will be inconsistent." << std::endl;
+      return;
+    }
     (*status)[idleCPUsKey] =
         static_cast<int>((*status)[idleCPUsKey]) + (availableThreads_ - lastReportedAvailableThreads_);
     lastReportedAvailableThreads_ = availableThreads_;
