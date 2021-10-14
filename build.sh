@@ -7,6 +7,7 @@ cd "$tilerRoot"
 echo "Building minimal-tiling-set..."
 mkdir -p bin
 g++ -O3 -std=c++17 -L/usr/local/opt/openssl/lib -I/usr/local/opt/openssl/include \
+                   minimal-tiling-sets/minimal-tiling-sets/*.cpp \
                    -lcryptominisat5 -lboost_filesystem -pthread -lssl -lcrypto \
-                   minimal-tiling-sets/minimal-tiling-sets/*.cpp -o bin/minimal-tiling-sets
+                   -o bin/minimal-tiling-sets
 echo "Build done."
