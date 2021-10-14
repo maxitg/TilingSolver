@@ -8,7 +8,8 @@ cd ~/git;
 
 # Install dependencies from yum
 echo "Installing dependencies from yum..."
-sudo yum -y install cmake3 zlib-devel sqlite-devel help2man autoconf automake libtool mpi-devel gcc-c++
+sudo yum -y install cmake3 zlib-devel sqlite-devel help2man autoconf automake libtool mpi-devel gcc-c++ cpan \
+            perl-IPC-Cmd
 echo 'export LD_LIBRARY_PATH="$LD_LIBRARY_PATH":/usr/lib64/openmpi/lib' >> ~/.bash_profile
 echo 'export PATH="$PATH":/usr/lib64/openmpi/bin/' >> ~/.bash_profile
 source ~/.bash_profile
@@ -63,3 +64,12 @@ make -j$NUMCPUS
 sudo make install
 cd ../..
 echo "Done installing nlohmann json."
+
+# Install openssl
+echo "Installing OpenSSL..."
+git clone --recursive https://github.com/openssl/openssl.git
+cd openssl
+sudo cpan -i Text::Template
+./Configure
+make -j$NUMCPUS
+sudo make install
