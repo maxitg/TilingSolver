@@ -249,9 +249,11 @@ class Dropbox::Implementation {
   void writeConfig() {
     std::ofstream file(configFilename_);
     if (file.is_open()) {
-      file << nlohmann::json({{dataDirectoryKey_, dataDirectory_}, {refreshTokenKey_, refreshToken_}}).dump(2) << std::endl;
+      file << nlohmann::json({{dataDirectoryKey_, dataDirectory_}, {refreshTokenKey_, refreshToken_}}).dump(2)
+           << std::endl;
     } else {
-      std::cerr << "Could not write config to " + configFilename_ + ": " + std::string(std::strerror(errno)) << std::endl;
+      std::cerr << "Could not write config to " + configFilename_ + ": " + std::string(std::strerror(errno))
+                << std::endl;
       throw Error::FailedToWriteConfig;
     }
     return file.close();
@@ -331,7 +333,7 @@ class Dropbox::Implementation {
         throw Error::FailedToGetAccessToken;
       }
       if (!resultJSON.is_object() || !resultJSON["refresh_token"].is_string() ||
-          !resultJSON["access_token"].is_string() || !resultJSON["expires_in"].is_string()) {
+          !resultJSON["access_token"].is_string() || !resultJSON["expires_in"].is_number_integer()) {
         std::cerr << "Received invalid refresh/access tokens from Dropbox." << std::endl;
         std::cerr << resultJSON.dump(2) << std::endl;
         throw Error::FailedToGetAccessToken;
@@ -366,7 +368,8 @@ class Dropbox::Implementation {
         logError({{"Error", "Received invalid JSON instead of an access token."}, {"Details", error.what()}});
         return std::nullopt;
       }
-      if (resultJSON.is_object() && resultJSON.count("access_token") && resultJSON["access_token"].is_string()) {
+      if (resultJSON.is_object() && resultJSON.count("access_token") && resultJSON["access_token"].is_string() &&
+          resultJSON["expires_in"].is_number_integer()) {
         accessToken_ = resultJSON["access_token"];
         accessTokenExpiration_ = std::chrono::steady_clock::now() + std::chrono::seconds(resultJSON["expires_in"]);
         return accessToken_;
