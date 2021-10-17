@@ -16,6 +16,7 @@ class MaskManager::Implementation {
   const int expectedStatusVersion_ = 1;
 
   const std::chrono::milliseconds sleepBetweenStatusUpdates_ = std::chrono::milliseconds(19237);
+  const std::chrono::milliseconds sleepBetweenLockTries_ = std::chrono::milliseconds(1202);
   const std::chrono::milliseconds sleepBetweenUnlockTries_ = std::chrono::milliseconds(1202);
   const std::chrono::milliseconds sleepBetweenUploadTries_ = std::chrono::milliseconds(1202);
 
@@ -107,8 +108,9 @@ class MaskManager::Implementation {
     std::optional<nlohmann::json> tasks;
     if (!(tasks = dropbox_.downloadJSON("tasks.json", nlohmann::json::array(), cerrPrint))) return;
 
-    if (!dropbox_.lockFile(statusFilename, cerrPrint)) return;
-
+    while (!dropbox_.lockFile(statusFilename, cerrPrint)) {
+      std::this_thread::sleep_for(sleepBetweenLockTries_);
+    }
     auto status = dropbox_.downloadJSON(statusFilename, defaultStatus, cerrPrint);
     if (isValidStatus(status)) {
       addMissingKeys(&status.value());
@@ -134,7 +136,9 @@ class MaskManager::Implementation {
     std::cout << "Notifying " + statusFilename + " we are no longer available." << std::endl;
     std::lock_guard<std::mutex> terminationLock(terminationSyncMutex_);
 
-    if (!dropbox_.lockFile(statusFilename, cerrPrint)) return;
+    while (!dropbox_.lockFile(statusFilename, cerrPrint)) {
+      std::this_thread::sleep_for(sleepBetweenLockTries_);
+    }
     auto status = dropbox_.downloadJSON(statusFilename, defaultStatus, cerrPrint);
     if (isValidStatus(status)) {
       availableThreads_ = 0;
