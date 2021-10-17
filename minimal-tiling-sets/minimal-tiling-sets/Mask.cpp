@@ -141,6 +141,9 @@ class Mask::Implementation {
     while (!writeToDropbox(json.value())) {
       std::this_thread::sleep_for(sleepBetweenFileUploads_);
     }
+    while (!writeStatusToDropbox()) {
+      std::this_thread::sleep_for(sleepBetweenFileUploads_);
+    }
     while (!unlockDropboxFile()) {
       std::this_thread::sleep_for(sleepBetweenUnlockTries_);
     }
@@ -167,6 +170,11 @@ class Mask::Implementation {
   bool writeToDropbox(const nlohmann::json& json) {
     return dropbox_.uploadJSON(
         loggingParameters_.filename, json, [this](const nlohmann::json& msg) { logWithTime(msg); });
+  }
+
+  bool writeStatusToDropbox() {
+    if (currentStatus_.is_null()) return true;
+    return dropbox_.uploadJSON(loggingParameters_.statusFilename, currentStatus_, [this](const nlohmann::json& msg) { logWithTime(msg); });
   }
 
   bool mergeData(nlohmann::json* data) {

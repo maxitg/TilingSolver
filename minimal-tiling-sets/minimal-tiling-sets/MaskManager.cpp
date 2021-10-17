@@ -277,6 +277,7 @@ class MaskManager::Implementation {
       threads_.push_back(std::thread([this, task, maskSpec] {
         Mask::LoggingParameters parameters;
         parameters.filename = std::string(task) + ".json";
+        parameters.statusFilename = "." + std::string(task) + ".status.json";
         parameters.resultsSavingPeriod = loggingParameters_.resultsSavingPeriod;
         parameters.updateStatus = [](const nlohmann::json& status){ return; };
         std::shared_ptr<Mask> mask = std::make_shared<Mask>(maskSpec->size, maskSpec->id, dropbox_, parameters);

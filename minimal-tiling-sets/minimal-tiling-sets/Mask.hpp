@@ -16,6 +16,7 @@ class Mask {
   struct LoggingParameters {
     std::function<void(const nlohmann::json&)> updateStatus = {};
     std::string filename;
+    std::string statusFilename;
     std::chrono::duration<float> resultsSavingPeriod = std::chrono::seconds(308);
   };
 
