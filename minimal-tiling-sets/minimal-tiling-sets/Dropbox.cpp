@@ -65,7 +65,9 @@ class Dropbox::Implementation {
                                     "",
                                     "text/plain; charset=dropbox-cors-hack"},
                                    "Failed to lock the data file.",
-                                   logError);
+                                   [&logError](const nlohmann::json& error) {
+                                     if (error["ResponseCode"] != 409) logError(error);
+                                   });
   }
 
   bool unlockFile(const std::string& filename, const std::function<void(const nlohmann::json&)>& logError) {
