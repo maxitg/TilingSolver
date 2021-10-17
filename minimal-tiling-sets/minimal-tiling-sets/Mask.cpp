@@ -618,6 +618,8 @@ class Mask::Implementation {
     } else {
       logWithTime({{"Message", "Starting tiling..."}});
     }
+    logProgress();
+    syncWithDropbox(SaveResultsPriority::Force);
 
     while (!isDone_ && !terminationRequested_) {
       logProgress();
@@ -652,7 +654,8 @@ class Mask::Implementation {
   }
 
   nlohmann::json mainStatsJSON() const {
-    return {{"MinimalSets", periods_.size()},
+    return {{"IsDone", isDone_},
+            {"MinimalSets", periods_.size()},
             {"MaxPeriod", maxPeriod_},
             {"MinGridSize", minimalGridSize_},
             {"MaxSetSize", maxSetSize_},
