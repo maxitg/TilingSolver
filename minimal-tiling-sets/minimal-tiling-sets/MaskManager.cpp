@@ -30,10 +30,6 @@ class MaskManager::Implementation {
                                         {masksDoneKey, nlohmann::json::array()},
                                         {masksInProgressKey, nlohmann::json::array()}};
 
-  const std::function<void(const nlohmann::json& msg)> cerrPrint = [](const nlohmann::json& msg) {
-    std::cerr << msg.dump(2) << std::endl;
-  };
-
   Dropbox& dropbox_;
   LoggingParameters loggingParameters_;
   std::chrono::time_point<std::chrono::steady_clock> lastProgressLogTime_ =
@@ -60,6 +56,8 @@ class MaskManager::Implementation {
   bool syncInProgress_ = false;
   bool terminated_ = false;
   std::mutex terminationSyncMutex_;
+
+  std::mutex printMutex_;
 
  public:
   Implementation(Dropbox& dropbox, const LoggingParameters& parameters)
@@ -97,6 +95,14 @@ class MaskManager::Implementation {
   }
 
  private:
+
+  std::function<void(const nlohmann::json& msg)> cerrPrintFunction() {
+    return [this](const nlohmann::json& msg) {
+      std::lock_guard<std::mutex> lock(printMutex_);
+      std::cerr << msg.dump(2) << std::endl;
+    };
+  }
+
   void runOnce() {
     if (!availableThreads_ && masksDone_.empty()) return;
     syncInProgress_ = true;
@@ -106,26 +112,27 @@ class MaskManager::Implementation {
       return;
     }
     std::optional<nlohmann::json> tasks;
-    if (!(tasks = dropbox_.downloadJSON("tasks.json", nlohmann::json::array(), cerrPrint))) return;
+    if (!(tasks = dropbox_.downloadJSON("tasks.json", nlohmann::json::array(), cerrPrintFunction()))) return;
 
-    while (!dropbox_.lockFile(statusFilename, cerrPrint)) {
+    while (!dropbox_.lockFile(statusFilename, cerrPrintFunction())) {
       std::this_thread::sleep_for(sleepBetweenLockTries_);
     }
-    auto status = dropbox_.downloadJSON(statusFilename, defaultStatus, cerrPrint);
+    auto status = dropbox_.downloadJSON(statusFilename, defaultStatus, cerrPrintFunction());
     if (isValidStatus(status)) {
       addMissingKeys(&status.value());
       recordDoneTasks(&status.value());
       startJobsIfNeeded(tasks.value(), &status.value());
       updateIdleThreads(&status.value());
       sortMasks(&status.value());
-      while (!dropbox_.uploadJSON(statusFilename, status.value(), cerrPrint)) {
+      while (!dropbox_.uploadJSON(statusFilename, status.value(), cerrPrintFunction())) {
         std::this_thread::sleep_for(sleepBetweenUploadTries_);
       };
     } else {
+      std::lock_guard<std::mutex> lock(printMutex_);
       std::cerr << "Cannot get " + statusFilename + " of expected version " << expectedStatusVersion_ << std::endl;
     }
 
-    while (!dropbox_.unlockFile(statusFilename, cerrPrint)) {
+    while (!dropbox_.unlockFile(statusFilename, cerrPrintFunction())) {
       std::this_thread::sleep_for(sleepBetweenUnlockTries_);
     }
     syncInProgress_ = false;
@@ -136,20 +143,20 @@ class MaskManager::Implementation {
     std::cout << "Notifying " + statusFilename + " we are no longer available." << std::endl;
     std::lock_guard<std::mutex> terminationLock(terminationSyncMutex_);
 
-    while (!dropbox_.lockFile(statusFilename, cerrPrint)) {
+    while (!dropbox_.lockFile(statusFilename, cerrPrintFunction())) {
       std::this_thread::sleep_for(sleepBetweenLockTries_);
     }
-    auto status = dropbox_.downloadJSON(statusFilename, defaultStatus, cerrPrint);
+    auto status = dropbox_.downloadJSON(statusFilename, defaultStatus, cerrPrintFunction());
     if (isValidStatus(status)) {
       availableThreads_ = 0;
       updateIdleThreads(&status.value());
       removeOurMasks(&status.value());
       sortMasks(&status.value());
-      while (!dropbox_.uploadJSON(statusFilename, status.value(), cerrPrint)) {
+      while (!dropbox_.uploadJSON(statusFilename, status.value(), cerrPrintFunction())) {
         std::this_thread::sleep_for(sleepBetweenUploadTries_);
       };
     }
-    while (!dropbox_.unlockFile(statusFilename, cerrPrint)) {
+    while (!dropbox_.unlockFile(statusFilename, cerrPrintFunction())) {
       std::this_thread::sleep_for(sleepBetweenUnlockTries_);
     }
 
@@ -166,6 +173,7 @@ class MaskManager::Implementation {
     std::lock_guard<std::mutex> ourMasksInProgressLock(ourMasksInProgressMutex_);
 
     if (!(*status)[masksInProgressKey].is_array()) {
+      std::lock_guard<std::mutex> lock(printMutex_);
       std::cerr << masksInProgressKey << " in " << statusFilename << " must be an array." << std::endl;
       std::cerr << "Cannot stop running masks, " << statusFilename << " will be inconsistent." << std::endl;
       return;
@@ -188,11 +196,13 @@ class MaskManager::Implementation {
     std::lock_guard<std::mutex> masksDoneLock(masksDoneMutex_);
 
     if (!(*status)[masksDoneKey].is_array()) {
+      std::lock_guard<std::mutex> lock(printMutex_);
       std::cerr << masksDoneKey << " in " << statusFilename << " is not an array." << std::endl;
       std::cerr << "Cannot update tasks as done." << std::endl;
       return;
     }
     if (!(*status)[masksInProgressKey].is_array()) {
+      std::lock_guard<std::mutex> lock(printMutex_);
       std::cerr << masksInProgressKey << " in " << statusFilename << " is not an array." << std::endl;
       std::cerr << "Cannot update tasks as done." << std::endl;
       return;
@@ -209,7 +219,10 @@ class MaskManager::Implementation {
         std::lock_guard<std::mutex> lock(ourMasksInProgressMutex_);
         ourMasksInProgress_.erase(masksDone_.front());
       }
-      std::cout << "Done: " << masksDone_.front() << std::endl;
+      {
+        std::lock_guard<std::mutex> lock(printMutex_);
+        std::cout << "Done: " << masksDone_.front() << std::endl;
+      }
       ++availableThreads_;
       masksDone_.pop();
     }
@@ -238,6 +251,7 @@ class MaskManager::Implementation {
     if (!availableThreads_) return;
 
     if (!(*status)[masksDoneKey].is_array()) {
+      std::lock_guard<std::mutex> lock(printMutex_);
       std::cerr << masksDoneKey << " is not an array in " << statusFilename << std::endl;
       std::cerr << "Cannot work on new or resume masks." << std::endl;
       return;
@@ -247,6 +261,7 @@ class MaskManager::Implementation {
       masksDone.insert(std::string(task));
     }
     if (!(*status)[masksInProgressKey].is_array()) {
+      std::lock_guard<std::mutex> lock(printMutex_);
       std::cerr << masksInProgressKey << " is not an array in " << statusFilename << std::endl;
       std::cerr << "Cannot work on new or resume masks." << std::endl;
       return;
@@ -256,6 +271,7 @@ class MaskManager::Implementation {
       masksInProgress.insert(std::string(task));
     }
     if (!tasks.is_array()) {
+      std::lock_guard<std::mutex> lock(printMutex_);
       std::cerr << "tasks.json is not an array." << std::endl;
       std::cerr << "Cannot work on new or resume masks." << std::endl;
       return;
@@ -266,6 +282,7 @@ class MaskManager::Implementation {
       (*status)[masksInProgressKey].push_back(task);
       std::optional<MaskSpec> maskSpec;
       if (!(maskSpec = parseMaskDescription(task))) {
+        std::lock_guard<std::mutex> lock(printMutex_);
         std::cerr << "Skipping invalid mask specification: " << task << std::endl;
         continue;
       }
@@ -273,13 +290,20 @@ class MaskManager::Implementation {
         std::lock_guard<std::mutex> lock(ourMasksInProgressMutex_);
         ourMasksInProgress_.insert(std::string(task));
       }
-      std::cout << "Working on " << std::string(task) << "..." << std::endl;
+      {
+        std::lock_guard<std::mutex> lock(printMutex_);
+        std::cout << "Working on " << std::string(task) << "..." << std::endl;
+      }
       threads_.push_back(std::thread([this, task, maskSpec] {
         Mask::LoggingParameters parameters;
         parameters.filename = std::string(task) + ".json";
         parameters.statusFilename = "." + std::string(task) + ".status.json";
         parameters.resultsSavingPeriod = loggingParameters_.resultsSavingPeriod;
         parameters.updateStatus = [](const nlohmann::json& status){ return; };
+        parameters.logError = [this](const nlohmann::json& error) {
+          std::lock_guard<std::mutex> lock(printMutex_);
+          std::cerr << error.dump(2) << std::endl;
+        };
         std::shared_ptr<Mask> mask = std::make_shared<Mask>(maskSpec->size, maskSpec->id, dropbox_, parameters);
         maskPtrs_.push_back(mask);
         mask->findMinimalSets();
@@ -316,6 +340,7 @@ class MaskManager::Implementation {
 
   void updateIdleThreads(nlohmann::json* status) {
     if (!(*status)[idleCPUsKey].is_number_integer() || (*status)[idleCPUsKey] < 0) {
+      std::lock_guard<std::mutex> lock(printMutex_);
       std::cerr << idleCPUsKey << " must be a non-negative integer in " << statusFilename << std::endl;
       std::cerr << "IdleCPU count will be inconsistent." << std::endl;
       return;

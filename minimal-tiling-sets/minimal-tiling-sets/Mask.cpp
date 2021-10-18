@@ -148,33 +148,33 @@ class Mask::Implementation {
       std::this_thread::sleep_for(sleepBetweenUnlockTries_);
     }
 
-    if (currentStatus_.count("Error")) logWithTime({{"Message", "Synchronization error is resolved."}});
+    if (currentStatus_.count("Error")) logErrorWithTime({{"Message", "Synchronization error is resolved."}});
     lastResultsSavingTime_ = std::chrono::steady_clock::now();
     syncInProgress_ = false;
   }
 
   bool lockDropboxFile() {
-    return dropbox_.lockFile(loggingParameters_.filename, [this](const nlohmann::json& msg) { logWithTime(msg); });
+    return dropbox_.lockFile(loggingParameters_.filename, [this](const nlohmann::json& msg) { logErrorWithTime(msg); });
   }
 
   bool unlockDropboxFile() {
-    return dropbox_.unlockFile(loggingParameters_.filename, [this](const nlohmann::json& msg) { logWithTime(msg); });
+    return dropbox_.unlockFile(loggingParameters_.filename, [this](const nlohmann::json& msg) { logErrorWithTime(msg); });
   }
 
   std::optional<nlohmann::json> jsonFromDropbox() {
     return dropbox_.downloadJSON(loggingParameters_.filename,
                                  {{"Version", expectedDataVersion}},
-                                 [this](const nlohmann::json& msg) { logWithTime(msg); });
+                                 [this](const nlohmann::json& msg) { logErrorWithTime(msg); });
   }
 
   bool writeToDropbox(const nlohmann::json& json) {
     return dropbox_.uploadJSON(
-        loggingParameters_.filename, json, [this](const nlohmann::json& msg) { logWithTime(msg); });
+        loggingParameters_.filename, json, [this](const nlohmann::json& msg) { logErrorWithTime(msg); });
   }
 
   bool writeStatusToDropbox() {
     if (currentStatus_.is_null()) return true;
-    return dropbox_.uploadJSON(loggingParameters_.statusFilename, currentStatus_, [this](const nlohmann::json& msg) { logWithTime(msg); });
+    return dropbox_.uploadJSON(loggingParameters_.statusFilename, currentStatus_, [this](const nlohmann::json& msg) { logErrorWithTime(msg); });
   }
 
   bool mergeData(nlohmann::json* data) {
@@ -305,7 +305,7 @@ class Mask::Implementation {
   }
 
   void printSynchronizationError(const std::string& message) const {
-    logWithTime({{"Error", "Merge conflict: " + message + " " + loggingParameters_.filename + "."}});
+    logErrorWithTime({{"Error", "Merge conflict: " + message + " " + loggingParameters_.filename + "."}});
   }
 
   static std::string setDescription(const std::vector<bool>& set) {
@@ -613,11 +613,6 @@ class Mask::Implementation {
   }
 
   void solve() {
-    if (isDone_) {
-      logWithTime({{"Message", "This mask is already done."}});
-    } else {
-      logWithTime({{"Message", "Starting tiling..."}});
-    }
     logProgress();
     syncWithDropbox(SaveResultsPriority::Force);
 
@@ -680,6 +675,12 @@ class Mask::Implementation {
     currentStatus_ = status;
     currentStatus_["Time"] = currentWallTimeString();
     loggingParameters_.updateStatus(currentStatus_);
+  }
+
+  void logErrorWithTime(const nlohmann::json& status) const {
+    auto statusWithTime = status;
+    statusWithTime["Time"] = currentWallTimeString();
+    loggingParameters_.logError(statusWithTime);
   }
 
   size_t addAndForbidSymmetricSets(const std::vector<bool>& set, int period) {
