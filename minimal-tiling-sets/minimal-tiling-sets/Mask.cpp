@@ -646,11 +646,13 @@ class Mask::Implementation {
         periodLowerBounds_[minimalSet] = 0;
       } else {
         isDone_ = true;
-        syncWithDropbox(SaveResultsPriority::Force);
       }
     }
 
-    if (isDone_) logFinalResults();
+    if (isDone_) {
+      logFinalResults();
+      syncWithDropbox(SaveResultsPriority::Force);
+    }
   }
 
   nlohmann::json mainStatsJSON() const {
