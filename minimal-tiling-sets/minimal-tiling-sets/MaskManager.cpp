@@ -148,6 +148,7 @@ class MaskManager::Implementation {
     }
     auto status = dropbox_.downloadJSON(statusFilename, defaultStatus, cerrPrintFunction());
     if (isValidStatus(status)) {
+      addMissingKeys(&status.value());
       availableThreads_ = 0;
       updateIdleThreads(&status.value());
       removeOurMasks(&status.value());
