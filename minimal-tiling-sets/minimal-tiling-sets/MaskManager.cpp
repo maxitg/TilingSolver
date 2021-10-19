@@ -95,7 +95,6 @@ class MaskManager::Implementation {
   }
 
  private:
-
   std::function<void(const nlohmann::json& msg)> cerrPrintFunction() {
     return [this](const nlohmann::json& msg) {
       std::lock_guard<std::mutex> lock(printMutex_);
@@ -299,7 +298,7 @@ class MaskManager::Implementation {
         parameters.filename = std::string(task) + ".json";
         parameters.statusFilename = "." + std::string(task) + ".status.json";
         parameters.resultsSavingPeriod = loggingParameters_.resultsSavingPeriod;
-        parameters.updateStatus = [](const nlohmann::json& status){ return; };
+        parameters.updateStatus = [](const nlohmann::json& status) { return; };
         parameters.logError = [this](const nlohmann::json& error) {
           std::lock_guard<std::mutex> lock(printMutex_);
           std::cerr << error.dump(2) << std::endl;

@@ -158,7 +158,8 @@ class Mask::Implementation {
   }
 
   bool unlockDropboxFile() {
-    return dropbox_.unlockFile(loggingParameters_.filename, [this](const nlohmann::json& msg) { logErrorWithTime(msg); });
+    return dropbox_.unlockFile(loggingParameters_.filename,
+                               [this](const nlohmann::json& msg) { logErrorWithTime(msg); });
   }
 
   std::optional<nlohmann::json> jsonFromDropbox() {
@@ -174,7 +175,9 @@ class Mask::Implementation {
 
   bool writeStatusToDropbox() {
     if (currentStatus_.is_null()) return true;
-    return dropbox_.uploadJSON(loggingParameters_.statusFilename, currentStatus_, [this](const nlohmann::json& msg) { logErrorWithTime(msg); });
+    return dropbox_.uploadJSON(loggingParameters_.statusFilename, currentStatus_, [this](const nlohmann::json& msg) {
+      logErrorWithTime(msg);
+    });
   }
 
   bool mergeData(nlohmann::json* data) {
@@ -209,7 +212,8 @@ class Mask::Implementation {
             "Period",
             [](const std::vector<bool>& set) { return true; },
             [this](const std::string& setDescription, int jsonValue, int localValue, int* result) {
-              printSynchronizationError("Local period for " + setDescription + " is different from the one in");
+              printSynchronizationError("Local period " + std::to_string(localValue) + " for " + setDescription +
+                                        " is different from " + std::to_string(jsonValue) + " in");
               return false;
             })) {
       return false;
@@ -246,8 +250,8 @@ class Mask::Implementation {
             "Maximal grid size",
             [](const std::vector<bool>& set) { return true; },
             [this](const std::string& setDescription, int jsonValue, int localValue, int* result) {
-              printSynchronizationError("Maximal grid size for " + setDescription + " is different from the one in");
-              return false;
+              *result = std::max(jsonValue, localValue);
+              return true;
             })) {
       return false;
     }
@@ -394,9 +398,11 @@ class Mask::Implementation {
     for (int i = 0; i < output.size(); ++i) {
       for (int j = 0; j < output[i].size(); ++j) {
         for (int k = 0; k < output[i][j].size(); ++k) {
-          if (output[i][j][k] == 0) output[i][j][k] = 1;
-          else if (output[i][j][k] == 1)
+          if (output[i][j][k] == 0) {
+            output[i][j][k] = 1;
+          } else if (output[i][j][k] == 1) {
             output[i][j][k] = 0;
+          }
         }
       }
     }
@@ -489,9 +495,11 @@ class Mask::Implementation {
       int index = 0;
       for (auto rowIt = pattern.rbegin(); rowIt != pattern.rend(); ++rowIt) {
         for (auto valueIt = rowIt->rbegin(); valueIt != rowIt->rend(); ++valueIt) {
-          if (*valueIt == 0) index <<= 1;
-          else if (*valueIt == 1)
+          if (*valueIt == 0) {
+            index <<= 1;
+          } else if (*valueIt == 1) {
             index = (index << 1) | 1;
+          }
         }
       }
       symmetries_.back().push_back(index);
@@ -620,7 +628,7 @@ class Mask::Implementation {
       logProgress();
       syncWithDropbox(SaveResultsPriority::Normal);
       if (!periodLowerBounds_.empty()) {
-        const auto& [set, lowerPeriodBound] = *periodLowerBounds_.begin();
+        const auto& [set, lowerPeriodBound] = *(periodLowerBounds_.begin());
         const auto periodToTry = lowerPeriodBound + 1;
         if (isTileable(set, periodToTry, GridBoundary::Finite)) {
           if (isTileable(set, periodToTry, GridBoundary::Periodic)) {
@@ -651,12 +659,12 @@ class Mask::Implementation {
   }
 
   nlohmann::json mainStatsJSON() const {
-    return {{"IsDone", isDone_},
-            {"MinimalSets", periods_.size()},
-            {"MaxPeriod", maxPeriod_},
-            {"MinGridSize", minimalGridSize_},
-            {"MaxSetSize", maxSetSize_},
-            {"SymmetryOrder", symmetries_.size()}};
+    return nlohmann::json::object({{"IsDone", isDone_},
+                                   {"MinimalSets", periods_.size()},
+                                   {"MaxPeriod", maxPeriod_},
+                                   {"MinGridSize", minimalGridSize_},
+                                   {"MaxSetSize", maxSetSize_},
+                                   {"SymmetryOrder", symmetries_.size()}});
   }
 
   void logFinalResults() const { logWithTime(mainStatsJSON()); }
@@ -678,6 +686,10 @@ class Mask::Implementation {
   }
 
   void logErrorWithTime(const nlohmann::json& status) const {
+    if (!status.is_object()) {
+      std::cerr << "logErrorWithTime received a status that is not an object." << std::endl;
+      return;
+    }
     auto statusWithTime = status;
     statusWithTime["Time"] = currentWallTimeString();
     loggingParameters_.logError(statusWithTime);
@@ -745,12 +757,12 @@ class Mask::Implementation {
   void incrementGridSize() {
     ++minimalGridSize_;
 
-    for (int y = 0; y < minimalGridSize_ + maskSize_.first - 2; ++y) {
+    for (int y = 0; y < cellVariables_.size(); ++y) {
       solver_.new_var();
       cellVariables_[y].push_back(solver_.nVars() - 1);
     }
     cellVariables_.push_back({});
-    for (int x = 0; x < minimalGridSize_ + maskSize_.second - 1; ++x) {
+    for (int x = 0; x < cellVariables_.size(); ++x) {
       solver_.new_var();
       cellVariables_.back().push_back(solver_.nVars() - 1);
     }

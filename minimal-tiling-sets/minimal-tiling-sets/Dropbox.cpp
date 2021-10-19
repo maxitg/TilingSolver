@@ -90,6 +90,7 @@ class Dropbox::Implementation {
                      "",
                      "text/plain"},
                     logError);
+    if (!response) return std::nullopt;
 
     if (response->first != 200) {
       nlohmann::json json;
@@ -97,6 +98,7 @@ class Dropbox::Implementation {
         json = nlohmann::json::parse(response->second);
       } catch (const nlohmann::detail::parse_error&) {
         logError({{"Error", response->second}});
+        return std::nullopt;
       }
       if (json.is_object() && json.count("error") && json["error"].count("path") &&
           json["error"]["path"].count(".tag") && json["error"]["path"][".tag"].is_string() &&
@@ -371,7 +373,7 @@ class Dropbox::Implementation {
         return std::nullopt;
       }
       if (resultJSON.is_object() && resultJSON.count("access_token") && resultJSON["access_token"].is_string() &&
-          resultJSON["expires_in"].is_number_integer()) {
+          resultJSON.count("expires_in") && resultJSON["expires_in"].is_number_integer()) {
         accessToken_ = resultJSON["access_token"];
         accessTokenExpiration_ = std::chrono::steady_clock::now() + std::chrono::seconds(resultJSON["expires_in"]);
         return accessToken_;
