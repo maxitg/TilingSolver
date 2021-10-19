@@ -692,6 +692,7 @@ class Mask::Implementation {
     }
     auto statusWithTime = status;
     statusWithTime["Time"] = currentWallTimeString();
+    statusWithTime["File"] = loggingParameters_.filename;
     loggingParameters_.logError(statusWithTime);
   }
 
