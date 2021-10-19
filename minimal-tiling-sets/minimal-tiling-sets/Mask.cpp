@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <queue>
+#include <random>
 #include <sstream>
 #include <thread>
 #include <unordered_set>
@@ -47,6 +48,7 @@ class Mask::Implementation {
   int maskID_;
   Dropbox& dropbox_;
   LoggingParameters loggingParameters_;
+  std::string lockCode_;
 
   mutable nlohmann::json currentStatus_;
 
@@ -83,6 +85,7 @@ class Mask::Implementation {
         maskID_(id),
         dropbox_(dropbox),
         loggingParameters_(loggingParameters),
+        lockCode_(randomString()),
         patternCount_(1 << bitCount(maskID_)) {
     solver_.set_num_threads(1);
     syncWithDropbox(SaveResultsPriority::Force);
@@ -124,7 +127,7 @@ class Mask::Implementation {
 
     bool isMergeSuccessful = false;
     // All operations must succeed. Otherwise, data may be lost.
-    while (!lockDropboxFile()) {
+    while (!lockDropboxFile(lockCode_)) {
       std::this_thread::sleep_for(sleepBetweenLockTries_);
     }
     std::optional<nlohmann::json> json;
@@ -153,8 +156,9 @@ class Mask::Implementation {
     syncInProgress_ = false;
   }
 
-  bool lockDropboxFile() {
-    return dropbox_.lockFile(loggingParameters_.filename, [this](const nlohmann::json& msg) { logErrorWithTime(msg); });
+  bool lockDropboxFile(const std::string& content) {
+    return dropbox_.lockFile(
+        loggingParameters_.filename, content, [this](const nlohmann::json& msg) { logErrorWithTime(msg); });
   }
 
   bool unlockDropboxFile() {

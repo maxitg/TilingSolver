@@ -4,5 +4,6 @@
 #include <string>
 
 std::string currentWallTimeString();
+std::string randomString();
 
 #endif /* Utils_hpp */

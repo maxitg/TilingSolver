@@ -32,6 +32,7 @@ class MaskManager::Implementation {
 
   Dropbox& dropbox_;
   LoggingParameters loggingParameters_;
+  std::string lockCode_;
   std::chrono::time_point<std::chrono::steady_clock> lastProgressLogTime_ =
       std::chrono::time_point<std::chrono::steady_clock>::min();
 
@@ -61,7 +62,7 @@ class MaskManager::Implementation {
 
  public:
   Implementation(Dropbox& dropbox, const LoggingParameters& parameters)
-      : dropbox_(dropbox), loggingParameters_(parameters) {}
+      : dropbox_(dropbox), loggingParameters_(parameters), lockCode_(randomString()) {}
 
   void run(int threadCount) {
     availableThreads_ = threadCount;
@@ -113,7 +114,7 @@ class MaskManager::Implementation {
     std::optional<nlohmann::json> tasks;
     if (!(tasks = dropbox_.downloadJSON("tasks.json", nlohmann::json::array(), cerrPrintFunction()))) return;
 
-    while (!dropbox_.lockFile(statusFilename, cerrPrintFunction())) {
+    while (!dropbox_.lockFile(statusFilename, lockCode_, cerrPrintFunction())) {
       std::this_thread::sleep_for(sleepBetweenLockTries_);
     }
     auto status = dropbox_.downloadJSON(statusFilename, defaultStatus, cerrPrintFunction());
@@ -142,7 +143,7 @@ class MaskManager::Implementation {
     std::cout << "Notifying " + statusFilename + " we are no longer available." << std::endl;
     std::lock_guard<std::mutex> terminationLock(terminationSyncMutex_);
 
-    while (!dropbox_.lockFile(statusFilename, cerrPrintFunction())) {
+    while (!dropbox_.lockFile(statusFilename, lockCode_, cerrPrintFunction())) {
       std::this_thread::sleep_for(sleepBetweenLockTries_);
     }
     auto status = dropbox_.downloadJSON(statusFilename, defaultStatus, cerrPrintFunction());

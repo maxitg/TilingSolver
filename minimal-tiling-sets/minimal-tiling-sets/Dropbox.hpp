@@ -12,7 +12,9 @@ class Dropbox {
   enum class Error { OK, NoDataDirectory, RandomGenerationFailed, FailedToGetAccessToken, FailedToWriteConfig };
 
   Dropbox(const std::string& appKey, const std::string& configFilename);
-  bool lockFile(const std::string& filename, const std::function<void(const nlohmann::json&)>& logError);
+  bool lockFile(const std::string& filename,
+                const std::string& content,
+                const std::function<void(const nlohmann::json&)>& logError);
   bool unlockFile(const std::string& filename, const std::function<void(const nlohmann::json&)>& logError);
   std::optional<nlohmann::json> downloadJSON(const std::string& filename,
                                              const nlohmann::json& defaultContents,

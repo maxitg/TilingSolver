@@ -52,37 +52,77 @@ class Dropbox::Implementation {
     }
   }
 
-  bool lockFile(const std::string& filename, const std::function<void(const nlohmann::json&)>& logError) {
-    return isSuccessfulPostRequest({"https://content.dropboxapi.com",
-                                    "/2/files/upload",
-                                    {{"Dropbox-API-Arg",
-                                      nlohmann::json({{"path", dataDirectory_ + "/." + filename + ".lock"},
-                                                      {"mode", "add"},
-                                                      {"autorename", false},
-                                                      {"mute", true},
-                                                      {"strict_conflict", true}})
-                                          .dump()}},
-                                    "",
-                                    "text/plain; charset=dropbox-cors-hack"},
-                                   "Failed to lock the data file.",
-                                   [&logError](const nlohmann::json& error) {
-                                     if (error["ResponseCode"] != 409) logError(error);
-                                   });
+  bool lockFile(const std::string& filename,
+                const std::string& content,
+                const std::function<void(const nlohmann::json&)>& logError) {
+    const std::string lockFilename = dataDirectory_ + "/." + filename + ".lock";
+    auto response = postRequest({"https://content.dropboxapi.com",
+                                 "/2/files/upload",
+                                 {{"Dropbox-API-Arg",
+                                   nlohmann::json({{"path", lockFilename},
+                                                   {"mode", "add"},
+                                                   {"autorename", false},
+                                                   {"mute", true},
+                                                   {"strict_conflict", true}})
+                                       .dump()}},
+                                 content,
+                                 "text/plain; charset=dropbox-cors-hack"},
+                                [this, &logError](const nlohmann::json& error) {
+                                  if (error[errorResponseCodeKey] != 409) logError(error);
+                                });
+    if (!response) return false;
+
+    if (response->first == 409) {
+      // Check if it's our lock file
+      auto downloadedContent = downloadString(lockFilename, "", {});
+      return downloadedContent && downloadedContent.value() == content;
+    } else if (response->first == 200) {
+      return true;
+    } else {
+      logError(jsonError("Could not lock " + filename, response.value()));
+      return false;
+    }
   }
 
   bool unlockFile(const std::string& filename, const std::function<void(const nlohmann::json&)>& logError) {
-    return isSuccessfulPostRequest({"https://api.dropboxapi.com",
-                                    "/2/files/delete_v2",
-                                    {},
-                                    nlohmann::json({{"path", dataDirectory_ + "/." + filename + ".lock"}}).dump(),
-                                    "application/json"},
-                                   "Failed to unlock the data file.",
-                                   logError);
+    const std::string lockFilename = dataDirectory_ + "/." + filename + ".lock";
+    auto response = postRequest({"https://api.dropboxapi.com",
+                                 "/2/files/delete_v2",
+                                 {},
+                                 nlohmann::json({{"path", dataDirectory_ + "/." + filename + ".lock"}}).dump(),
+                                 "application/json"},
+                                [this, &logError](const nlohmann::json& error) {
+                                  if (error[errorResponseCodeKey] != 409) logError(error);
+                                });
+    if (!response) return false;
+
+    if (response->first == 409) {
+      nlohmann::json json;
+      try {
+        json = nlohmann::json::parse(response->second);
+      } catch (const nlohmann::detail::parse_error&) {
+        logError({{jsonErrorKey, response->second}});
+        return false;
+      }
+      if (json.is_object() && json.count("error") && json["error"].count("path_lookup") &&
+          json["error"]["path_lookup"].count(".tag") && json["error"]["path_lookup"][".tag"].is_string() &&
+          json["error"]["path_lookup"][".tag"] == "not_found") {
+        return true;
+      } else {
+        logError(jsonError("Failed to unlock " + filename, response.value()));
+        return false;
+      }
+    } else if (response->first == 200) {
+      return true;
+    } else {
+      logError(jsonError("Could not unlock " + filename, response.value()));
+      return false;
+    }
   }
 
-  std::optional<nlohmann::json> downloadJSON(const std::string& filename,
-                                             const nlohmann::json& defaultContents,
-                                             const std::function<void(const nlohmann::json&)>& logError) {
+  std::optional<std::string> downloadString(const std::string& filename,
+                                            const std::string& defaultContents,
+                                            const std::function<void(const nlohmann::json&)>& logError) {
     auto response =
         postRequest({"https://content.dropboxapi.com",
                      "/2/files/download",
@@ -97,7 +137,7 @@ class Dropbox::Implementation {
       try {
         json = nlohmann::json::parse(response->second);
       } catch (const nlohmann::detail::parse_error&) {
-        logError({{"Error", response->second}});
+        logError({{jsonErrorKey, response->second}});
         return std::nullopt;
       }
       if (json.is_object() && json.count("error") && json["error"].count("path") &&
@@ -109,12 +149,23 @@ class Dropbox::Implementation {
         return std::nullopt;
       }
     } else {
+      return response->second;
+    }
+  }
+
+  std::optional<nlohmann::json> downloadJSON(const std::string& filename,
+                                             const nlohmann::json& defaultContents,
+                                             const std::function<void(const nlohmann::json&)>& logError) {
+    auto string = downloadString(filename, defaultContents.dump(), logError);
+    if (string) {
       try {
-        return nlohmann::json::parse(response->second);
+        return nlohmann::json::parse(string.value());
       } catch (const nlohmann::detail::parse_error& error) {
-        logError({{"Error", "Downloaded file " + filename + " is not valid JSON."}, {"Details", error.what()}});
+        logError({{jsonErrorKey, "Downloaded file " + filename + " is not valid JSON."}, {"Details", error.what()}});
         return std::nullopt;
       }
+    } else {
+      return std::nullopt;
     }
   }
 
@@ -156,6 +207,10 @@ class Dropbox::Implementation {
     }
   }
 
+  const std::string jsonErrorKey = "Error";
+  const std::string errorResponseCodeKey = "ResponseCode";
+  const std::string errorResponseKey = "Response";
+
   nlohmann::json jsonError(const std::string& message, const std::pair<int, std::string>& response) {
     nlohmann::json responseJSON;
     try {
@@ -163,7 +218,7 @@ class Dropbox::Implementation {
     } catch (const nlohmann::detail::parse_error&) {
       responseJSON = response.second;
     }
-    return {{"Error", message}, {"ResponseCode", response.first}, {"Response", responseJSON}};
+    return {{jsonErrorKey, message}, {errorResponseCodeKey, response.first}, {errorResponseKey, responseJSON}};
   }
 
   std::optional<std::pair<int, std::string>> postRequest(const PostRequestData& requestData,
@@ -182,7 +237,7 @@ class Dropbox::Implementation {
       auto result = httplib::Client(requestData.domain)
                         .Post(requestData.path.c_str(), headers, requestData.body, requestData.contentType.c_str());
       if (!result) {
-        logError({{"Error", httplib::to_string(result.error())}});
+        logError({{jsonErrorKey, httplib::to_string(result.error())}});
         return std::nullopt;
       }
 
@@ -191,7 +246,7 @@ class Dropbox::Implementation {
         if (result->has_header(retryAfterKey.c_str())) {
           int retryAfter;
           auto exceptionHandler = [this, &result, &retryAfterKey, &logError](const std::string& errorDetails) {
-            logError({{"Error",
+            logError({{jsonErrorKey,
                        "Invalid value of Retry-After header: " + result->get_header_value(retryAfterKey.c_str()) + "."},
                       {"Details", errorDetails}});
             bumpExponentialBackoff();
@@ -357,7 +412,7 @@ class Dropbox::Implementation {
                   httplib::MultipartFormDataItems{
                       {"grant_type", "refresh_token"}, {"refresh_token", refreshToken_}, {"client_id", appKey_}});
     if (!result) {
-      logError({{"Error", httplib::to_string(result.error())}});
+      logError({{jsonErrorKey, httplib::to_string(result.error())}});
       return std::nullopt;
     }
     if (result->status != 200) {
@@ -369,7 +424,7 @@ class Dropbox::Implementation {
       try {
         resultJSON = nlohmann::json::parse(result->body);
       } catch (const nlohmann::detail::parse_error& error) {
-        logError({{"Error", "Received invalid JSON instead of an access token."}, {"Details", error.what()}});
+        logError({{jsonErrorKey, "Received invalid JSON instead of an access token."}, {"Details", error.what()}});
         return std::nullopt;
       }
       if (resultJSON.is_object() && resultJSON.count("access_token") && resultJSON["access_token"].is_string() &&
@@ -378,7 +433,7 @@ class Dropbox::Implementation {
         accessTokenExpiration_ = std::chrono::steady_clock::now() + std::chrono::seconds(resultJSON["expires_in"]);
         return accessToken_;
       } else {
-        logError({{"Error", "No access token returned by Dropbox."}});
+        logError({{jsonErrorKey, "No access token returned by Dropbox."}});
         return std::nullopt;
       }
     }
@@ -388,8 +443,10 @@ class Dropbox::Implementation {
 Dropbox::Dropbox(const std::string& appKey, const std::string& configFilename)
     : implementation_(std::make_shared<Implementation>(appKey, configFilename)) {}
 
-bool Dropbox::lockFile(const std::string& filename, const std::function<void(const nlohmann::json&)>& logError) {
-  return implementation_->lockFile(filename, logError);
+bool Dropbox::lockFile(const std::string& filename,
+                       const std::string& content,
+                       const std::function<void(const nlohmann::json&)>& logError) {
+  return implementation_->lockFile(filename, content, logError);
 }
 
 bool Dropbox::unlockFile(const std::string& filename, const std::function<void(const nlohmann::json&)>& logError) {
