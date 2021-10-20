@@ -88,7 +88,6 @@ class MaskManager::Implementation {
     for (const auto& maskPtr : maskPtrs_) {
       auto sharedPtr = maskPtr.lock();
       if (sharedPtr && !sharedPtr->canBeSafelyTerminated()) {
-        std::cout << "Cannot terminate yet due to mask data syncing..." << std::endl;
         return false;
       }
     }
