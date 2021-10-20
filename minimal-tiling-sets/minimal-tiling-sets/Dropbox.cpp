@@ -68,13 +68,16 @@ class Dropbox::Implementation {
                                  content,
                                  "text/plain; charset=dropbox-cors-hack"},
                                 [this, &logError](const nlohmann::json& error) {
-                                  if (!error.count(errorResponseCodeKey) || error[errorResponseCodeKey] != 409) logError(error);
+                                  if (!error.count(errorResponseCodeKey) || error[errorResponseCodeKey] != 409)
+                                    logError(error);
                                 });
     if (!response) return false;
 
     if (response->first == 409) {
       // Check if it's our lock file
-      auto downloadedContent = downloadString(lockFilename, "", {});
+      auto downloadedContent = downloadString(lockFilename, "", [this, &logError](const nlohmann::json& error) {
+        if (!error.count(errorResponseCodeKey) || error[errorResponseCodeKey] != 409) logError(error);
+      });
       return downloadedContent && downloadedContent.value() == content;
     } else if (response->first == 200) {
       return true;
@@ -92,7 +95,8 @@ class Dropbox::Implementation {
                                  nlohmann::json({{"path", dataDirectory_ + "/." + filename + ".lock"}}).dump(),
                                  "application/json"},
                                 [this, &logError](const nlohmann::json& error) {
-                                  if (!error.count(errorResponseCodeKey) || error[errorResponseCodeKey] != 409) logError(error);
+                                  if (!error.count(errorResponseCodeKey) || error[errorResponseCodeKey] != 409)
+                                    logError(error);
                                 });
     if (!response) return false;
 
@@ -392,7 +396,8 @@ class Dropbox::Implementation {
         throw Error::FailedToGetAccessToken;
       }
       if (!resultJSON.is_object() || !resultJSON.count("refresh_token") || !resultJSON["refresh_token"].is_string() ||
-          !resultJSON.count("access_token") || !resultJSON["access_token"].is_string() || !resultJSON.count("expires_in") || !resultJSON["expires_in"].is_number_integer()) {
+          !resultJSON.count("access_token") || !resultJSON["access_token"].is_string() ||
+          !resultJSON.count("expires_in") || !resultJSON["expires_in"].is_number_integer()) {
         std::cerr << "Received invalid refresh/access tokens from Dropbox." << std::endl;
         std::cerr << resultJSON.dump(2) << std::endl;
         throw Error::FailedToGetAccessToken;
