@@ -638,14 +638,14 @@ class Mask::Implementation {
           if (isTileable(set, periodToTry, GridBoundary::Periodic)) {
             addAndForbidSymmetricSets(set, periodToTry);
             maxPeriod_ = std::max(periodToTry, maxPeriod_);
-            periodLowerBounds_.erase(set);
+            removeSymmetricCandidates(set);
           } else {
             periodLowerBounds_[set] = periodToTry;
           }
         } else {
           maximalGridSizes_[set] = periodToTry - 1;
           increaseGridSize(periodToTry);
-          periodLowerBounds_.erase(set);
+          removeSymmetricCandidates(set);
         }
       } else if (const auto possibleMinimalSet = findSet()) {
         auto minimalSet = possibleMinimalSet.value();
@@ -700,9 +700,8 @@ class Mask::Implementation {
     loggingParameters_.logError(statusWithTime);
   }
 
-  size_t addAndForbidSymmetricSets(const std::vector<bool>& set, int period) {
+  std::unordered_set<std::vector<bool>> symmetryTransformedSets(const std::vector<bool>& set) {
     std::unordered_set<std::vector<bool>> transformedSets;
-    auto size = setSize(set);
     for (const auto& symmetry : symmetries_) {
       std::vector<bool> transformedSet;
       for (int i = 0; i < set.size(); ++i) {
@@ -710,12 +709,24 @@ class Mask::Implementation {
       }
       transformedSets.insert(transformedSet);
     }
+    return transformedSets;
+  }
+
+  size_t addAndForbidSymmetricSets(const std::vector<bool>& set, int period) {
+    const auto transformedSets = symmetryTransformedSets(set);
     for (const auto& transformedSet : transformedSets) {
       periods_[transformedSet] = period;
-      maxSetSize_ = std::max(maxSetSize_, size);
+      maxSetSize_ = std::max(maxSetSize_, setSize(set));
       forbidMinimalSet(transformedSet);
     }
     return transformedSets.size();
+  }
+
+  void removeSymmetricCandidates(const std::vector<bool>& set) {
+    const auto transformedSets = symmetryTransformedSets(set);
+    for (const auto& transformedSet : transformedSets) {
+      periodLowerBounds_.erase(transformedSet);
+    }
   }
 
   static int setSize(const std::vector<bool>& set) {
