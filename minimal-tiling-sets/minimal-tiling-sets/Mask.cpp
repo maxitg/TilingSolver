@@ -762,12 +762,12 @@ class Mask::Implementation {
   void incrementGridSize() {
     ++minimalGridSize_;
 
-    for (int y = 0; y < cellVariables_.size(); ++y) {
+    for (int y = 0; y < (minimalGridSize_ - 1) + maskSize_.first - 1; ++y) {
       solver_.new_var();
       cellVariables_[y].push_back(solver_.nVars() - 1);
     }
     cellVariables_.push_back({});
-    for (int x = 0; x < cellVariables_.size(); ++x) {
+    for (int x = 0; x < minimalGridSize_ + maskSize_.second - 1; ++x) {
       solver_.new_var();
       cellVariables_.back().push_back(solver_.nVars() - 1);
     }
