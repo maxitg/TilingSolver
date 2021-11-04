@@ -7,7 +7,7 @@ Consider a set of tiles, for example,
 
 <img src="images/TilingPatterns.png">
 
-Now, the problem is to tile a grid such that each 3x3 region corresponds to one of the tiles. For the tile to match, the
+The problem is to tile a grid such that each 3x3 region corresponds to one of the tiles. For the tile to match, the
 black and white cells have to match, and the gray cells can correspond to anything (they are not part of the mask).
 
 For example, this periodic tiling is a solution:
@@ -73,8 +73,8 @@ To use it, one needs to put a file to `~/.minimal-tiling-sets` with the followin
 }
 ```
 
-and put a file `tasks.json` into the same directory containing a single array of strings with short forms of the masks
-that need to be evaluated, for example,
+and put a file `tasks.json` into the specified Dropbox directory containing a single array of strings with short forms
+of the masks that need to be evaluated, for example,
 
 ```json
 [
@@ -92,7 +92,7 @@ executable will wait for new tasks after it's done, so it needs to be manually t
 
 If the executable is terminated, it can be restarted from the previously saved results.
 
-# Understanding results
+# Understanding Results
 
 Consider `3-3-325.json` created in the previous section:
 
@@ -134,11 +134,11 @@ specified size (it could be interesting to look at examples that tile large but 
 
 `"MinimalGridSize"` and `"PeriodLowerBounds"` are the variables used internally.
 
-`"Periods"` is the most interesting one for us. The keys here are the minimal sets themselves, and the values are the
-square grid sizes that these sets can tile periodically (thus proving they can tile an infinite grid).
+`"Periods"` is the most interesting one for us. The keys here are the minimal sets, and the values are the square grid
+sizes that these sets can tile periodically (thus proving they can tile an infinite grid).
 
-The keys are hex numbers which, if written as binary, represents which tiling sets from a particular mask an elements of
-the set. One can use code from `MinimalSetsSearcher.wl` to convert them to full tiling-set expressions. For example,
+The keys are hex numbers which, if written as binary, represent which tiling sets from a particular mask are elements of
+the set. One can use code from `MinimalSetsSearcher.wl` to convert them to explicit tiling sets. For example,
 
 ```wl
 In[] := NumberToPatternSet[maskToAllPatterns[idToMask[{3, 3}, 325]]][FromDigits["1886", 16]]
