@@ -21,7 +21,7 @@ checkerboard pattern:
 In[] := TilingStatePlot @ GenerateTiling[{{{0, 1}, {1, 0}}, {{1, 0}, {0, 1}}}, {}, 10]
 ```
 
-<img src="images/checkerboard.png">
+<img src="images/Checkerboard.png">
 
 Here `{{{0, 1}, {1, 0}}, {{1, 0}, {0, 1}}}` is the set of tiles, `{}` is the seed (a pattern that has to appear
 somewhere at least once, which is not used in this example), and `10` is the size of the grid.
