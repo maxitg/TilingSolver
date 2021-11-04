@@ -33,7 +33,7 @@ int main(int argc, const char* argv[]) {
     }
   }
 
-  const std::string dropboxAppKey = "tmlt7oeepzda36p";
+  const std::string dropboxAppKey = "539qkotir8jem0d";
   const std::string configFilename = std::string(std::getenv("HOME")) + "/.minimal-tiling-sets";
 
   TilingSystem::MaskManager::LoggingParameters parameters;
